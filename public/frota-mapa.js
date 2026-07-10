@@ -6,24 +6,32 @@
 // comuns e a coordenada média.
 //
 // Mapa: world-atlas (world-110m.json, TopoJSON) decodificado aqui mesmo, sem
-// biblioteca externa. Projeção equirretangular simples num viewBox 1000x500:
+// biblioteca externa. Projeção equirretangular simples num plano 1000x500:
 //   x = (lon + 180) / 360 * 1000      y = (90 - lat) / 180 * 500
-// Toda a animação é um transform no <g> do mundo (rotação + zoom), então o
-// layout da página nunca é tocado. Marcadores e rótulos ficam em coordenada de
-// TELA, recalculados no fim da animação e em cada resize (durante o giro/zoom
-// eles estão ocultos — só o transform do <g> muda por quadro, o mínimo que um
-// navegador fraco como o Amazon Silk consegue repintar).
+//
+// Renderização: os países são RASTERIZADOS uma única vez num <canvas>, e toda
+// a animação (rotação + zoom) é um transform CSS no próprio elemento — o
+// compositor da GPU move a imagem pronta sem repintar um pixel. A versão
+// anterior (SVG com transform de atributo no <g>) re-rasterizava o vetor
+// inteiro a cada quadro e travava em navegadores fracos (Amazon Silk /
+// Fire TV). Ao fim da animação o canvas é redesenhado UMA vez, nítido, no
+// enquadramento final — durante o zoom a imagem global é só ampliada (fica
+// levemente borrada por ~1,6s, imperceptível em movimento). Pinos e rótulos
+// são HTML em coordenada de TELA, posicionados quando o mapa para.
 
 import { consultarFrotaLocalizacao } from "./downdetector.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do restante
 
-const LARGURA = 1000, ALTURA = 500; // viewBox equirretangular do mapa
+const LARGURA = 1000, ALTURA = 500; // plano equirretangular do mapa
 const projX = (lon) => (lon + 180) / 360 * LARGURA;
 const projY = (lat) => (90 - lat) / 180 * ALTURA;
 
 // Enquadramento do Brasil inteiro (fallback quando não há pontos).
 const BRASIL_BBOX = { oeste: -74, leste: -34, norte: 6, sul: -34 };
+
+// Visão global usada na abertura (mundo inteiro, sem os polos vazios).
+const GLOBAL_BBOX = { oeste: -180, leste: 180, norte: 84, sul: -56 };
 
 // Destino do zoom: calculado a partir dos pontos da frota (enquadra só a
 // região onde as máquinas estão, para dar o máximo de zoom possível). Cai no
@@ -52,8 +60,10 @@ const T_GIRO = 2600;   // rotação (uma volta) desacelerando
 const T_ZOOM = 1600;   // zoom até enquadrar a frota
 const T_REVELA = 700;  // fade dos marcadores após o zoom
 
-// Raio dos pinos em unidades de TELA (contra-escalados pelo zoom do mapa).
-const R_PONTO = 5, R_HALO = 8;
+// Resolução máxima do raster (multiplicador do devicePixelRatio): acima de
+// 1.5x o ganho visual é pequeno e a memória/tempo de pintura dobram — ruim
+// justamente nos aparelhos fracos que motivaram o canvas.
+const DPR_MAX = 1.5;
 
 const palco = document.querySelector("#mapa-palco");
 
@@ -120,7 +130,8 @@ function quebrarNoAntimeridiano(anel) {
   return partes;
 }
 
-// Anéis geo -> atributo "d" de <path> na projeção equirretangular.
+// Anéis geo -> path SVG ("d") na projeção equirretangular. O mesmo texto vale
+// para o canvas: new Path2D(d) aceita path data de SVG.
 function caminhoDoPais(aneis) {
   return aneis
     .flatMap((anel) => quebrarNoAntimeridiano(anel))
@@ -141,61 +152,72 @@ async function carregarBrasilDetalhado() {
   return caminhoDoPais(aneis);
 }
 
-// ===== Montagem do SVG do mundo =====
+// ===== Montagem: geometria em Path2D + canvas e overlays =====
+// render.paises = países comuns; render.brasil = contorno em destaque (50m se
+// disponível, senão o 110m); render.costura = base sob o Brasil detalhado que
+// fecha a fenda 50m x 110m contra os vizinhos (ver comentários no CSS).
+let render = null;
+
 async function montarMapa() {
   const [topo, brasilDetalhado] = await Promise.all([
     fetch("./world-110m.json").then((r) => r.json()),
     carregarBrasilDetalhado().catch(() => null),
   ]);
   const arcos = decodificarArcos(topo);
-  const paises = topo.objects.countries.geometries
-    .filter((geo) => !(brasilDetalhado && geo.id === "076"))
-    .map((geo) => ({
-      brasil: geo.id === "076" || /brazil|brasil/i.test(geo.properties?.name || ""),
-      d: caminhoDoPais(aneisDaGeometria(geo, arcos)),
-    }));
 
-  const paths = paises
-    .map((p) => `<path class="mapa-pais${p.brasil ? " mapa-pais--brasil" : ""}" d="${p.d}"></path>`)
-    .join("");
+  const paises = [];
+  let brasil110m = null;
+  for (const geo of topo.objects.countries.geometries) {
+    const ehBrasil = geo.id === "076" || /brazil|brasil/i.test(geo.properties?.name || "");
+    if (brasilDetalhado && geo.id === "076") continue; // substituído pelo 50m
+    const d = caminhoDoPais(aneisDaGeometria(geo, arcos));
+    if (ehBrasil) brasil110m = new Path2D(d);
+    else paises.push(new Path2D(d));
+  }
 
-  // Costura Brasil ↔ vizinhos: o contorno detalhado do Brasil (50m) não bate com
-  // o dos vizinhos (110m), deixando uma fenda escura na fronteira. Em vez de
-  // engordar traço (borra a costura), desenhamos o Brasil detalhado DUAS vezes:
-  //   1) uma BASE com a cor dos vizinhos e um traço largo da mesma cor, que
-  //      "invade" o vão e o pinta com a cor de país (some a fenda escura);
-  //   2) o Brasil verde por cima, que define a silhueta e a borda limpas.
-  // A base fica logo antes do Brasil verde, então cobre o vão sem vazar por cima.
-  const brasilBase = brasilDetalhado
-    ? `<path class="mapa-costura" d="${brasilDetalhado}"></path>`
-    : "";
-  const brasilTopo = brasilDetalhado
-    ? `<path class="mapa-pais mapa-pais--brasil" d="${brasilDetalhado}"></path>`
-    : "";
+  render = {
+    paises,
+    brasil: brasilDetalhado ? new Path2D(brasilDetalhado) : brasil110m,
+    costura: brasilDetalhado ? new Path2D(brasilDetalhado) : null,
+  };
 
+  // Canvas do mundo + overlays de TELA (pinos, linhas-guia e rótulos em HTML,
+  // por cima do canvas — nunca distorcem com o zoom).
   palco.innerHTML =
-    // Duas cópias do mundo lado a lado (a 2ª deslocada +LARGURA): durante o
-    // giro o grupo desliza na horizontal e a cópia extra preenche a lateral,
-    // deixando a rotação contínua (sem faixa vazia). O zoom mira o Brasil na
-    // 1ª cópia; a 2ª sai naturalmente de cena.
-    //
-    // Os pinos (#mapa-pinos) ficam DENTRO de #mapa-mundo, então herdam o mesmo
-    // transform do mapa e grudam na geografia exata (nada de "bolinha voando").
-    // Só o raio é contra-escalado por quadro para o pino não inflar com o zoom.
-    `<svg viewBox="0 0 ${LARGURA} ${ALTURA}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-       <g id="mapa-mundo">
-         <g>${paths}${brasilBase}${brasilTopo}</g>
-         <g id="mapa-copia" transform="translate(${LARGURA} 0)">${paths}${brasilBase}${brasilTopo}</g>
-         <g id="mapa-pinos"></g>
-       </g>
-     </svg>
+    `<canvas class="mapa-canvas" id="mapa-canvas" aria-hidden="true"></canvas>
+     <div class="mapa-pinos" id="mapa-pinos" aria-hidden="true"></div>
      <svg class="mapa-linhas" id="mapa-linhas" aria-hidden="true"></svg>
      <div class="mapa-rotulos" id="mapa-rotulos"></div>`;
+
+  // Mostra o mundo já na visão global enquanto os dados da frota não chegam.
+  if (palco.clientWidth) rasterizar(transformParaBBox(GLOBAL_BBOX));
 }
 
-// ===== Transform do <g> do mundo: {escala, tx, ty} em unidades do viewBox =====
-// Enquadra um retângulo geo no palco visível (o slice do preserveAspectRatio
-// pode cortar as laterais; por isso medimos a razão real do palco).
+// Resolve as cores do tema a partir das MESMAS classes CSS da época do SVG
+// (.mapa-pais etc., mantidas no index.html): um elemento-sonda entra no DOM só
+// para o getComputedStyle devolver fill/stroke já resolvidos (var(),
+// color-mix()...). Assim o canvas acompanha o tema sem duplicar cor aqui.
+function coresDoTema() {
+  const sonda = (classe) => {
+    const el = document.createElement("i");
+    el.className = classe;
+    el.style.cssText = "position:absolute;visibility:hidden";
+    palco.appendChild(el);
+    const s = getComputedStyle(el);
+    const cores = { fill: s.fill, stroke: s.stroke };
+    el.remove();
+    return cores;
+  };
+  return {
+    pais: sonda("mapa-pais"),
+    costura: sonda("mapa-costura"),
+    brasil: sonda("mapa-pais--brasil"),
+  };
+}
+
+// ===== Transforms: {escala, tx, ty} em unidades do plano 1000x500 =====
+// Enquadra um retângulo geo no palco visível (comportamento de "cover": o
+// excedente é cortado; por isso medimos a razão real do palco).
 function transformParaBBox(bbox, folga = 1) {
   const x0 = projX(bbox.oeste), x1 = projX(bbox.leste);
   const y0 = projY(bbox.norte), y1 = projY(bbox.sul);
@@ -204,42 +226,127 @@ function transformParaBBox(bbox, folga = 1) {
 
   // Razão do palco na tela decide qual dimensão limita o zoom.
   const razaoPalco = palco.clientWidth / palco.clientHeight || 2;
-  const razaoViewBox = LARGURA / ALTURA;
-  // Largura/altura "efetivas" do viewBox visível (o slice corta o excedente).
-  const visLargura = razaoPalco >= razaoViewBox ? LARGURA : ALTURA * razaoPalco;
-  const visAltura = razaoPalco >= razaoViewBox ? LARGURA / razaoPalco : ALTURA;
+  const razaoPlano = LARGURA / ALTURA;
+  // Largura/altura "efetivas" do plano visível (o cover corta o excedente).
+  const visLargura = razaoPalco >= razaoPlano ? LARGURA : ALTURA * razaoPalco;
+  const visAltura = razaoPalco >= razaoPlano ? LARGURA / razaoPalco : ALTURA;
 
   const escala = Math.min(visLargura / larguraGeo, visAltura / alturaGeo);
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  // Centraliza o alvo no meio do viewBox (500,250) após escalar.
+  // Centraliza o alvo no meio do plano (500,250) após escalar.
   return { escala, tx: LARGURA / 2 - cx * escala, ty: ALTURA / 2 - cy * escala };
 }
 
-function aplicarTransform(t) {
-  const g = palco.querySelector("#mapa-mundo");
-  if (g) g.setAttribute("transform", `translate(${t.tx} ${t.ty}) scale(${t.escala})`);
-  return t;
-}
-
-// Converte lat/lon -> pixel na tela, dado o transform atual do mundo e a
-// geometria do palco (respeitando o slice do preserveAspectRatio).
-function geoParaTela(lon, lat, t) {
-  // Ponto no espaço do viewBox após o transform do mundo.
-  const vx = projX(lon) * t.escala + t.tx;
-  const vy = projY(lat) * t.escala + t.ty;
-
-  // Como o viewBox mapeia para os pixels do palco (slice = cobre, centraliza).
+// Como o plano 1000x500 mapeia para os pixels do palco (cover, centralizado):
+// escalaTela = px por unidade do plano; offX/offY centralizam o corte.
+function geometriaTela() {
   const razaoPalco = palco.clientWidth / palco.clientHeight || 2;
-  const razaoViewBox = LARGURA / ALTURA;
+  const razaoPlano = LARGURA / ALTURA;
   let escalaTela, offX = 0, offY = 0;
-  if (razaoPalco >= razaoViewBox) {
+  if (razaoPalco >= razaoPlano) {
     escalaTela = palco.clientWidth / LARGURA;      // largura preenche
     offY = (palco.clientHeight - ALTURA * escalaTela) / 2;
   } else {
     escalaTela = palco.clientHeight / ALTURA;      // altura preenche
     offX = (palco.clientWidth - LARGURA * escalaTela) / 2;
   }
+  return { escalaTela, offX, offY };
+}
+
+// Converte lat/lon -> pixel na tela, dado um transform do mundo.
+function geoParaTela(lon, lat, t) {
+  const { escalaTela, offX, offY } = geometriaTela();
+  const vx = projX(lon) * t.escala + t.tx;
+  const vy = projY(lat) * t.escala + t.ty;
   return { x: vx * escalaTela + offX, y: vy * escalaTela + offY };
+}
+
+// ===== Raster do mundo =====
+// Desenha o mundo no canvas com o transform `t`. Acontece POUCAS vezes (início
+// da animação, fim dela e resize) — nunca por quadro. `comCopia` estende o
+// canvas uma volta inteira à direita com uma 2ª cópia do mundo: deslizar o
+// elemento para a esquerda durante o giro expõe a cópia e a rotação fica
+// contínua, sem faixa vazia.
+let transformRaster = null; // com que transform o canvas foi pintado
+
+function rasterizar(t, comCopia = false) {
+  const canvas = palco.querySelector("#mapa-canvas");
+  if (!canvas || !render || !palco.clientWidth) return;
+  const { escalaTela, offX, offY } = geometriaTela();
+
+  const larguraMundoPx = LARGURA * t.escala * escalaTela;
+  const cssL = Math.ceil(palco.clientWidth + (comCopia ? larguraMundoPx : 0));
+  const cssA = palco.clientHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
+  canvas.width = Math.round(cssL * dpr);
+  canvas.height = Math.round(cssA * dpr);
+  canvas.style.width = `${cssL}px`;
+  canvas.style.height = `${cssA}px`;
+  canvas.style.transform = "";
+
+  const ctx = canvas.getContext("2d");
+  const cores = coresDoTema();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssL, cssA);
+  ctx.translate(offX, offY);
+  ctx.scale(escalaTela, escalaTela);
+  ctx.translate(t.tx, t.ty);
+  ctx.scale(t.escala, t.escala);
+  ctx.lineJoin = "round";
+
+  const desenharMundo = () => {
+    // Países comuns: traço da COR DO PREENCHIMENTO engorda cada país meio
+    // traço para fora e fecha a costura com o Brasil detalhado (ver CSS).
+    ctx.fillStyle = cores.pais.fill;
+    ctx.strokeStyle = cores.pais.stroke;
+    ctx.lineWidth = 0.6;
+    for (const p of render.paises) { ctx.fill(p); ctx.stroke(p); }
+
+    // Base de costura sob o Brasil: silhueta 50m na cor dos vizinhos, invade a
+    // fenda 50m x 110m e a pinta de cor-de-país antes do Brasil verde por cima.
+    if (render.costura) {
+      ctx.fillStyle = cores.costura.fill;
+      ctx.strokeStyle = cores.costura.stroke;
+      ctx.lineWidth = 0.6;
+      ctx.fill(render.costura);
+      ctx.stroke(render.costura);
+    }
+
+    // Brasil em destaque, traço com espessura constante DE TELA (~1.5px, o
+    // equivalente do non-scaling-stroke da versão SVG).
+    if (render.brasil) {
+      ctx.fillStyle = cores.brasil.fill;
+      ctx.strokeStyle = cores.brasil.stroke;
+      ctx.lineWidth = 1.5 / (escalaTela * t.escala);
+      ctx.fill(render.brasil);
+      ctx.stroke(render.brasil);
+    }
+  };
+
+  desenharMundo();
+  if (comCopia) {
+    ctx.translate(LARGURA, 0);
+    desenharMundo();
+  }
+  transformRaster = t;
+}
+
+// Simula o transform `t` movendo o canvas por CSS em relação ao raster feito
+// em `transformRaster` — só o compositor trabalha, nada é repintado.
+// Derivação: tela(v) = (v·escala + tx)·escalaTela + off para ambos os
+// transforms; igualando o raster movido ao alvo:
+//   k = escala_t / escala_raster
+//   c = escalaTela·(t.t − k·raster.t) + off·(1 − k)
+function aplicarTransformCss(t) {
+  const canvas = palco.querySelector("#mapa-canvas");
+  if (!canvas || !transformRaster) return;
+  const { escalaTela, offX, offY } = geometriaTela();
+  const r = transformRaster;
+  const k = t.escala / r.escala;
+  const cx = escalaTela * (t.tx - k * r.tx) + offX * (1 - k);
+  const cy = escalaTela * (t.ty - k * r.ty) + offY * (1 - k);
+  canvas.style.transform =
+    `translate(${cx.toFixed(2)}px, ${cy.toFixed(2)}px) scale(${k.toFixed(4)})`;
 }
 
 // ===== Marcadores + rótulos =====
@@ -257,18 +364,17 @@ function desenharPinos() {
   const rotulos = palco.querySelector("#mapa-rotulos");
   if (!gPinos || !rotulos || !gLinhas) return;
 
-  // Pinos em coordenada GEO (dentro de #mapa-mundo): herdam o transform do
-  // mapa. O raio (r) é reescrito a cada quadro em reposicionar().
+  // Pinos em coordenada de TELA (divs posicionados por reposicionar): tamanho
+  // fixo em px, sem contra-escala — o mapa embaixo é quem dá zoom.
   gPinos.innerHTML = pontosAtuais.map((p, i) =>
-    `<g class="mapa-pino" data-i="${i}" opacity="0"
-        transform="translate(${projX(p.lon).toFixed(2)} ${projY(p.lat).toFixed(2)})">
-       <circle class="mapa-pino__halo"></circle>
-       <circle class="mapa-pino__ponto"></circle>
-     </g>`
+    `<div class="mapa-pino" data-i="${i}">
+       <div class="mapa-pino__halo"></div>
+       <div class="mapa-pino__ponto"></div>
+     </div>`
   ).join("");
 
   // Linha-guia (leader) do pino até o rótulo, quando o rótulo é afastado no
-  // declutter. Espaço de TELA (SVG overlay separado, ver reposicionar).
+  // declutter. Espaço de TELA (SVG overlay, ver reposicionar).
   gLinhas.innerHTML = pontosAtuais.map((_, i) =>
     `<polyline class="mapa-linha" data-i="${i}"></polyline>`
   ).join("");
@@ -285,10 +391,7 @@ function desenharPinos() {
   }).join("");
 
   refs = {
-    pinos: [...gPinos.querySelectorAll(".mapa-pino")].map((g) => ({
-      ponto: g.querySelector(".mapa-pino__ponto"),
-      halo: g.querySelector(".mapa-pino__halo"),
-    })),
+    pinos: [...gPinos.querySelectorAll(".mapa-pino")],
     linhas: [...gLinhas.querySelectorAll(".mapa-linha")],
     cards: [...rotulos.querySelectorAll(".mapa-rotulo")],
     medidas: pontosAtuais.map(() => null), // {w,h} de cada card, medido 1x
@@ -300,32 +403,20 @@ function tituloClasse(s) {
   return String(s || "").toLowerCase().replace(/\b\p{L}/gu, (c) => c.toUpperCase());
 }
 
-// Reposiciona pinos, rótulos e linhas-guia para o transform atual do mapa.
-// Chamado a cada quadro da animação e em cada resize.
-//
-// Pinos: vivem em coordenada GEO dentro de #mapa-mundo (herdam o transform),
-// então só o RAIO precisa ser contra-escalado (r_tela / escala_total) para o
-// pino não inflar com o zoom. escala_total = escala do mundo * escala do slice.
-// Rótulos e linhas: espaço de TELA (px), com declutter vertical para não
-// empilharem quando várias frentes caem quase no mesmo ponto.
+// Posiciona pinos, rótulos e linhas-guia para o transform `t` do mapa.
+// Roda no FIM da animação e em cada resize — nunca por quadro (durante o
+// giro/zoom tudo isto está oculto).
 function reposicionar(t) {
   if (!refs) return;
 
-  const escalaSlice = escalaDoSlice();
-  const escalaTotal = t.escala * escalaSlice;
-
-  // 1) Pinos na geografia; raio contra-escalado para ~R_PONTO px na tela.
-  refs.pinos.forEach(({ ponto, halo }) => {
-    if (ponto) ponto.setAttribute("r", (R_PONTO / escalaTotal).toFixed(3));
-    if (halo) halo.setAttribute("r", (R_HALO / escalaTotal).toFixed(3));
-    // stroke também escala com o mundo; compensa para ~1.5px de tela.
-    if (ponto) ponto.setAttribute("stroke-width", (1.5 / escalaTotal).toFixed(3));
+  // 1) Âncoras = posição de TELA de cada pino.
+  const ancoras = pontosAtuais.map((p) => geoParaTela(p.lon, p.lat, t));
+  refs.pinos.forEach((el, i) => {
+    el.style.left = `${ancoras[i].x.toFixed(1)}px`;
+    el.style.top = `${ancoras[i].y.toFixed(1)}px`;
   });
 
-  // 2) Âncoras dos rótulos = posição de TELA de cada pino.
-  const ancoras = pontosAtuais.map((p) => geoParaTela(p.lon, p.lat, t));
-
-  // 3) Layout em DUAS COLUNAS (esquerda/direita): cada card vai para a coluna
+  // 2) Layout em DUAS COLUNAS (esquerda/direita): cada card vai para a coluna
   // do lado do seu pino e é empilhado por altura. A linha entra pela borda
   // interna do card (o lado voltado para o centro). cx/cy = centro da caixa;
   // ax/ay = âncora (pino); lado = -1 (esquerda) | +1 (direita).
@@ -505,12 +596,6 @@ function empilharCentrado(coluna, H, folga) {
   }
 }
 
-// Fator de escala do preserveAspectRatio="slice": quanto 1 unidade do viewBox
-// vale em pixels de tela (a maior das duas razões, pois o slice cobre).
-function escalaDoSlice() {
-  return Math.max(palco.clientWidth / LARGURA, palco.clientHeight / ALTURA);
-}
-
 // ===== Animação de abertura: gira -> zoom -> revela =====
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -523,20 +608,16 @@ let jaAnimouNestaVisita = false;
 function animarAbertura() {
   cancelAnimationFrame(animId);
   const semMovimento = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const copia = palco.querySelector("#mapa-copia");
 
   // Visão global inicial (mundo inteiro enquadrado) e destino (região da frota).
-  const global = transformParaBBox({ oeste: -180, leste: 180, norte: 84, sul: -56 });
+  const global = transformParaBBox(GLOBAL_BBOX);
   const destino = transformParaBBox(alvoBBox);
 
-  // Fim de animação (ou modo sem movimento): a 2ª cópia do mundo só serve ao
-  // giro — fora dele, sai do render (~180 paths a menos para repintar, o que
-  // pesa em GPUs fracas como a do Fire TV/Silk). Pinos e rótulos só são
-  // posicionados aqui: durante o giro/zoom estão ocultos (ocultarPinos), então
-  // reposicioná-los por quadro seria reflow jogado fora.
+  // Fim de animação (ou modo sem movimento): re-rasteriza UMA vez, nítido, no
+  // enquadramento final (o zoom só ampliou o raster global) e posiciona
+  // pinos/rótulos — que ficaram ocultos durante o giro/zoom.
   const finalizar = () => {
-    if (copia) copia.setAttribute("display", "none");
-    aplicarTransform(destino);
+    rasterizar(destino);
     reposicionar(destino);
   };
 
@@ -546,7 +627,10 @@ function animarAbertura() {
     return;
   }
 
-  if (copia) copia.removeAttribute("display"); // o giro precisa da cópia
+  rasterizar(global, true); // com a 2ª cópia à direita para o giro contínuo
+  // Já posiciona o canvas no quadro inicial do giro (uma volta atrás), senão o
+  // raster recém-pintado aparece por um instante na posição final.
+  aplicarTransformCss({ escala: global.escala, tx: global.tx - LARGURA * global.escala, ty: global.ty });
   ocultarPinos();
   const inicio = performance.now();
 
@@ -577,15 +661,16 @@ function animarAbertura() {
       };
     }
 
-    // Só o transform do <g> muda por quadro — é o mínimo repintável.
-    aplicarTransform(t);
+    // Por quadro só muda o transform CSS do canvas — trabalho de compositor,
+    // zero repintura mesmo em GPU fraca.
+    aplicarTransformCss(t);
     animId = requestAnimationFrame(quadro);
   }
   animId = requestAnimationFrame(quadro);
 }
 
 function ocultarPinos() {
-  palco.querySelectorAll(".mapa-pino").forEach((g) => (g.style.opacity = "0"));
+  palco.querySelectorAll(".mapa-pino").forEach((el) => (el.style.opacity = "0"));
   palco.querySelectorAll(".mapa-rotulo").forEach((el) => el.classList.remove("mapa-rotulo--visivel"));
   // Esconde as linhas-guia durante o giro/zoom: até o mapa parar no Brasil,
   // elas apontariam para pinos fora de quadro, cruzando o mundo inteiro.
@@ -598,8 +683,8 @@ function revelarPinos(imediato) {
   const pinos = [...palco.querySelectorAll(".mapa-pino")];
   const rots = [...palco.querySelectorAll(".mapa-rotulo")];
   const linhas = palco.querySelector("#mapa-linhas");
-  pinos.forEach((g, i) => {
-    const aplica = () => (g.style.opacity = "1");
+  pinos.forEach((el, i) => {
+    const aplica = () => (el.style.opacity = "1");
     if (imediato) aplica();
     else setTimeout(aplica, (i / Math.max(pinos.length, 1)) * T_REVELA);
   });
@@ -665,11 +750,11 @@ async function atualizar() {
   }
 }
 
-// Reposiciona ao redimensionar (mantém pinos/rótulos alinhados ao mapa).
+// Reenquadra ao redimensionar (re-rasteriza no novo tamanho e realinha tudo).
 window.addEventListener("resize", () => {
   if (!mapaPronto || !pontosAtuais.length || !palco.offsetParent) return;
   const t = transformParaBBox(alvoBBox);
-  aplicarTransform(t);
+  rasterizar(t);
   reposicionar(t);
 });
 

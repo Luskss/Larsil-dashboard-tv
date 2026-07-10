@@ -327,9 +327,9 @@
     .frota-aviso--visivel { display: block; }
 
     /* ===== Vista Mapa da Frota ===== */
-    /* O palco ocupa o espaço que sobra; o SVG do mapa preenche por inteiro e
-       toda a animação (rotação + zoom) acontece dentro do próprio <g> do SVG,
-       via viewBox/transform, sem tocar no layout da página. */
+    /* O palco ocupa o espaço que sobra; o mundo é rasterizado uma vez num
+       <canvas> e toda a animação (rotação + zoom) é um transform CSS no
+       elemento — composto na GPU, sem repintar (fluido até no Amazon Silk). */
     .mapa-palco {
       flex: 1;
       min-height: 0;
@@ -341,9 +341,21 @@
       overflow: hidden;
       position: relative;
     }
-    .mapa-palco svg { width: 100%; height: 100%; display: block; }
+    /* Canvas do mundo: dimensionado por JS (na fase do giro ele é mais largo
+       que o palco, com uma 2ª cópia do mundo à direita) e animado só via
+       transform — will-change o promove a camada própria do compositor. */
+    .mapa-canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
 
-    /* Contorno dos países e do país destacado (Brasil). */
+    /* Cores do mapa (países e Brasil em destaque). Desde a migração para
+       canvas estas classes não estilizam elementos visíveis: frota-mapa.js lê
+       fill/stroke computados daqui (elemento-sonda + getComputedStyle) para
+       pintar o canvas — as cores continuam acompanhando o tema num lugar só. */
     .mapa-pais {
       fill: var(--surface-2);
       /* Stroke da COR DO PREENCHIMENTO (não da borda): como o traço é centrado
@@ -380,13 +392,28 @@
       vector-effect: non-scaling-stroke;
     }
 
-    /* Marcador de projeto: pino + halo pulsante. Fica DENTRO do <g> do mapa
-       (herda o transform e gruda na geografia); o raio é contra-escalado por JS
-       para não inflar com o zoom. O pulso anima SÓ a opacidade: animar
-       transform/scale em SVG não é composto em navegadores fracos (Silk) e
-       repintava o mapa inteiro 60x/s para sempre. */
+    /* Marcador de projeto: pino + halo pulsante, em coordenada de TELA (divs
+       sobre o canvas, posicionados por JS quando o mapa para). Tamanho fixo em
+       px — quem dá zoom é o mapa embaixo. O pulso anima SÓ a opacidade: é
+       composto na GPU e a área repintada é o circulinho, não o mapa. */
+    .mapa-pinos {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .mapa-pino {
+      position: absolute;
+      opacity: 0;
+      transition: opacity .4s ease;
+    }
     .mapa-pino__halo {
-      fill: var(--success);
+      position: absolute;
+      left: -8px;
+      top: -8px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--success);
       opacity: .28;
       animation: mapa-pulso 2.6s ease-in-out infinite;
     }
@@ -395,8 +422,14 @@
       50%      { opacity: .45; }
     }
     .mapa-pino__ponto {
-      fill: var(--success);
-      stroke: var(--surface);
+      position: absolute;
+      left: -5px;
+      top: -5px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      border: 1.5px solid var(--surface);
     }
 
     /* SVG overlay das linhas-guia (pino -> rótulo afastado no declutter). Fica
@@ -770,8 +803,8 @@
 
     <div id="mapa-aviso" class="mapa-aviso" role="alert"></div>
 
-    <!-- O SVG do globo/mapa é montado por frota-mapa.js: o mapa-múndi gira uma
-         volta, desacelera e dá zoom no Brasil, então revela os marcadores. -->
+    <!-- O canvas do globo/mapa é montado por frota-mapa.js: o mapa-múndi gira
+         uma volta, desacelera e dá zoom no Brasil, então revela os marcadores. -->
     <div id="mapa-palco" class="mapa-palco" role="img"
          aria-label="Mapa do Brasil com a localização atual da frota por projeto"></div>
   </section>
