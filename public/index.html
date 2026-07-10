@@ -465,7 +465,9 @@
     .mapa-rotulo {
       position: absolute;
       transform: translateX(-50%);
-      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      background: color-mix(in srgb, black 55%, transparent);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
       border: 1px solid var(--border);
       border-radius: .6rem;
       padding: .3rem .55rem;
@@ -538,6 +540,109 @@
       display: none;
     }
     .ativos-aviso--visivel { display: block; }
+
+    /* ===== Vista Serviços (Railway): lista com nome/endereço/status =====
+       Um .painel único contendo uma linha por serviço — mais fácil de ler
+       numa TV do que um grid de cards quando a lista cresce. */
+    .railway-lista {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .servico-linha {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem .25rem;
+      border-bottom: 1px solid var(--border);
+      --cor-status: var(--text-dim);
+    }
+    .railway-lista .servico-linha:last-child { border-bottom: none; }
+    .servico-linha--online { --cor-status: var(--success); }
+    .servico-linha--erro   { --cor-status: var(--critical); }
+    .servico-linha__bolinha {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--cor-status);
+      flex: 0 0 auto;
+    }
+    .servico-linha__info { min-width: 0; }
+    .servico-linha__nome {
+      font-size: 1.2rem;
+      font-weight: 800;
+    }
+    .servico-linha__endereco {
+      font-size: .85rem;
+      color: var(--text-dim);
+      word-break: break-all;
+    }
+    .servico-linha__status {
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--cor-status);
+      white-space: nowrap;
+    }
+
+    /* ===== Rotinas agendadas (crons): pills numa faixa horizontal ===== */
+    .railway-crons__titulo {
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: .6rem;
+    }
+    .railway-crons__lista {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .6rem;
+    }
+    .cron-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .5rem .85rem;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      --cor-status: var(--text-dim);
+    }
+    .cron-pill--ok   { --cor-status: var(--success); }
+    .cron-pill--erro { --cor-status: var(--critical); }
+    .cron-pill__bolinha {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--cor-status);
+      flex: 0 0 auto;
+    }
+    .cron-pill__nome {
+      font-size: .95rem;
+      font-weight: 700;
+    }
+    .cron-pill__prox {
+      font-size: .8rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .railway-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .railway-aviso--visivel { display: block; }
 
     /* ===== Vista Helpdesk: três colunas kanban; o excesso de cards rola
        DENTRO da coluna — a página em si nunca rola. ===== */
@@ -833,6 +938,24 @@
     <div id="colunas" class="colunas mt-3"></div>
   </section>
 
+  <!-- ===== Vista Serviços (status dos outros projetos no Railway) ===== -->
+  <section id="vista-railway" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Serviços</h1>
+    </div>
+
+    <div id="railway-aviso" class="railway-aviso" role="alert"></div>
+
+    <!-- Lista de serviços (preenchida pelo railway-status.js) -->
+    <div id="railway-cards" class="painel railway-lista mt-3"></div>
+
+    <!-- Crons: pills numa seção própria, escondida quando não há nenhum. -->
+    <section id="railway-crons" class="railway-crons mt-3" hidden>
+      <h2 class="railway-crons__titulo">Rotinas agendadas</h2>
+      <div id="railway-crons-lista" class="railway-crons__lista"></div>
+    </section>
+  </section>
+
   <!-- Toast de novos chamados no helpdesk -->
   <div id="toast-novos" class="toast-novos" role="status" aria-live="polite">
     <span class="toast-novos__bolinha"></span>
@@ -846,5 +969,6 @@
   <script src="./frota-mapa.js" type="module"></script>
   <script src="./ativos-ti.js" type="module"></script>
   <script src="./helpdesk-chamados.js" type="module"></script>
+  <script src="./railway-status.js" type="module"></script>
 </body>
 </html>

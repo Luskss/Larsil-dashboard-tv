@@ -11,6 +11,7 @@
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
+//   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 
 import express from "express";
 import { fileURLToPath } from "node:url";
@@ -369,6 +370,112 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
     console.error("Erro ao consultar os chamados do helpdesk:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco do helpdesk" });
   }
+});
+
+// ===== Status dos serviços do Railway =====
+// Cada projeto monitorado é um Project Token do Railway (Project Settings ->
+// Tokens). A variável RAILWAY_SERVICOS lista pares "Rótulo=TOKEN" separados
+// por vírgula, ex.: RAILWAY_SERVICOS=Dashboard TI=abc123,Site=def456 (.env).
+// Um Project Token é escopado a um projeto+ambiente (não a um serviço só),
+// então cada token pode render vários cards — um por serviço do projeto,
+// nomeado "Rótulo · Serviço" quando há mais de um.
+// A API exige o header Project-Access-Token (não Authorization: Bearer).
+const RAILWAY_API_URL = "https://backboard.railway.app/graphql/v2";
+
+function listaTokensRailway() {
+  const bruto = process.env.RAILWAY_SERVICOS || "";
+  return bruto
+    .split(",")
+    .map((par) => par.trim())
+    .filter(Boolean)
+    .map((par) => {
+      const i = par.indexOf("=");
+      if (i < 0) return null;
+      return { rotulo: par.slice(0, i).trim(), token: par.slice(i + 1).trim() };
+    })
+    .filter(Boolean);
+}
+
+async function consultaRailway(token, query, variables) {
+  const resp = await fetch(RAILWAY_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Project-Access-Token": token,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const dados = await resp.json();
+  if (!resp.ok || dados.errors) throw new Error(dados.errors?.[0]?.message || "Erro na API do Railway");
+  return dados.data;
+}
+
+const QUERY_PROJECT_TOKEN = `query { projectToken { projectId environmentId } }`;
+
+// Uma única consulta traz todos os serviços do projeto (no ambiente do token),
+// já com nome, domínio, status do último deploy e — para crons — o agendamento
+// e a próxima execução. cronSchedule/nextCronRunAt vêm null em serviços que não
+// são cron job (Settings -> Cron Schedule no Railway).
+const QUERY_SERVICOS = `
+  query($environmentId: String!) {
+    environment(id: $environmentId) {
+      serviceInstances {
+        edges {
+          node {
+            serviceName
+            cronSchedule
+            nextCronRunAt
+            latestDeployment { status }
+            domains {
+              serviceDomains { domain }
+              customDomains { domain }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+async function servicosDoToken({ rotulo, token }) {
+  const { environmentId } = (await consultaRailway(token, QUERY_PROJECT_TOKEN)).projectToken;
+  const { environment } = await consultaRailway(token, QUERY_SERVICOS, { environmentId });
+
+  const nos = environment?.serviceInstances?.edges || [];
+  const varios = nos.length > 1;
+
+  return nos.map(({ node }) => {
+    const dominio =
+      node.domains?.customDomains?.[0]?.domain ||
+      node.domains?.serviceDomains?.[0]?.domain ||
+      "";
+    return {
+      // "nome" identifica na lista (com o rótulo do projeto quando há vários
+      // serviços); "servico" é o nome puro, usado na pill de cron.
+      nome: varios ? `${rotulo} · ${node.serviceName}` : rotulo,
+      servico: node.serviceName,
+      endereco: dominio ? `https://${dominio}` : "",
+      online: node.latestDeployment?.status === "SUCCESS",
+      cron: node.cronSchedule || null,
+      proximaExecucao: node.nextCronRunAt || null,
+    };
+  });
+}
+
+app.get("/api/railway-status", async (_req, res) => {
+  const tokens = listaTokensRailway();
+  if (tokens.length === 0) {
+    return res.status(503).json({ erro: "Nenhum serviço configurado — preencha RAILWAY_SERVICOS no .env" });
+  }
+  const resultado = await Promise.all(
+    tokens.map((t) =>
+      servicosDoToken(t).catch((erro) => {
+        console.error(`Erro ao consultar Railway (${t.rotulo}):`, erro.message);
+        return [{ nome: t.rotulo, endereco: "", online: false }];
+      })
+    )
+  );
+  res.json({ servicos: resultado.flat() });
 });
 
 // ===== Downdetector =====

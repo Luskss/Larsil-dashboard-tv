@@ -12,6 +12,7 @@
 // <section> no index.html e inclua-a aqui em PAGINAS.
 
 const CHAVE_VISIVEIS = "paginas-visiveis";
+const CHAVE_ORDEM = "paginas-ordem";
 
 // Rotação automática entre as vistas (estilo painel de TV, como no projeto
 // lovable): uma barra fina no rodapé enche durante o tempo abaixo e, ao
@@ -33,6 +34,7 @@ export const PAGINAS = [
   { rotulo: "Mapa da Frota",arquivo: "frota-mapa.html",          vista: "vista-mapa",      hash: "#mapa" },
   { rotulo: "Ativos de TI", arquivo: "ativos-ti.html",           vista: "vista-ativos",    hash: "#ativos" },
   { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },
+  { rotulo: "Serviços",     arquivo: "railway-status.html",      vista: "vista-railway",   hash: "#servicos" },
 ];
 
 export function paginasVisiveis() {
@@ -47,6 +49,29 @@ export function paginasVisiveis() {
 
 export function salvarPaginasVisiveis(arquivos) {
   localStorage.setItem(CHAVE_VISIVEIS, JSON.stringify(arquivos));
+}
+
+// Ordem customizada das páginas (definida arrastando na gestão). Páginas
+// novas que ainda não estão na ordem salva entram no fim, na ordem de PAGINAS.
+export function paginasOrdenadas() {
+  const salvo = localStorage.getItem(CHAVE_ORDEM);
+  let ordem = [];
+  if (salvo) {
+    try {
+      const lista = JSON.parse(salvo);
+      if (Array.isArray(lista)) ordem = lista;
+    } catch {}
+  }
+  const porArquivo = new Map(PAGINAS.map((p) => [p.arquivo, p]));
+  const ordenadas = ordem.map((arquivo) => porArquivo.get(arquivo)).filter(Boolean);
+  for (const pagina of PAGINAS) {
+    if (!ordenadas.includes(pagina)) ordenadas.push(pagina);
+  }
+  return ordenadas;
+}
+
+export function salvarPaginasOrdem(arquivos) {
+  localStorage.setItem(CHAVE_ORDEM, JSON.stringify(arquivos));
 }
 
 const CSS = `
@@ -172,7 +197,7 @@ export function montarPaginacao() {
 
   // Só monta a barra no documento que tem as vistas (index.html); em páginas
   // fora do SPA que importem este módulo não há o que navegar.
-  const existentes = PAGINAS.filter((p) => document.getElementById(p.vista));
+  const existentes = paginasOrdenadas().filter((p) => document.getElementById(p.vista));
   if (existentes.length === 0) return;
 
   const visiveis = new Set(paginasVisiveis());

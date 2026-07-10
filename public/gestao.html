@@ -19,6 +19,7 @@
       border-radius: .75rem;
       background: var(--surface-2);
       border: 1px solid var(--border);
+      transition: transform .15s ease, opacity .15s ease, border-color .15s ease;
     }
     .item-pagina input[type="checkbox"] {
       width: 18px; height: 18px;
@@ -31,6 +32,18 @@
       color: var(--text-dim);
       font-variant-numeric: tabular-nums;
     }
+    .item-pagina__alca {
+      cursor: grab;
+      color: var(--text-dim);
+      flex: 0 0 auto;
+      user-select: none;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 .25rem;
+    }
+    .item-pagina__alca:active { cursor: grabbing; }
+    .item-pagina--arrastando { opacity: .4; }
+    .item-pagina--sobre { border-color: var(--success); }
 
     .campo-cidade {
       display: flex;
@@ -86,13 +99,14 @@
       <h2 class="font-bold mb-1">Páginas visíveis na navegação</h2>
       <p class="text-sm mb-4" style="color: var(--text-dim);">
         Desmarque uma página para tirá-la da barra de bolinhas do rodapé (ela continua acessível pela URL).
+        Arraste pela alça (⠿) para reordenar as bolinhas.
       </p>
       <div id="lista-paginas" class="lista-paginas"></div>
     </div>
   </div>
 
   <script type="module">
-    import { PAGINAS, paginasVisiveis, salvarPaginasVisiveis } from "./paginacao.js";
+    import { PAGINAS, paginasVisiveis, salvarPaginasVisiveis, paginasOrdenadas, salvarPaginasOrdem } from "./paginacao.js";
     import { getConfig, setConfig } from "./downdetector.js";
 
     // Sem montarPaginacao(): esta página fica sempre fora da navegação/transição
@@ -119,22 +133,69 @@
 
     const lista = document.querySelector("#lista-paginas");
     const visiveis = new Set(paginasVisiveis());
+    let ordem = paginasOrdenadas();
 
-    lista.innerHTML = PAGINAS.map((p) => `
-      <label class="item-pagina">
-        <input type="checkbox" data-arquivo="${p.arquivo}" ${visiveis.has(p.arquivo) ? "checked" : ""}>
-        <span class="item-pagina__rotulo">${p.rotulo}</span>
-        <span class="item-pagina__arquivo ml-auto">${p.arquivo}</span>
-      </label>
-    `).join("");
+    function renderizarLista() {
+      lista.innerHTML = ordem.map((p) => `
+        <label class="item-pagina" draggable="true" data-arquivo="${p.arquivo}">
+          <span class="item-pagina__alca" draggable="false" title="Arrastar para reordenar">⠿</span>
+          <input type="checkbox" data-arquivo="${p.arquivo}" ${visiveis.has(p.arquivo) ? "checked" : ""}>
+          <span class="item-pagina__rotulo">${p.rotulo}</span>
+          <span class="item-pagina__arquivo ml-auto">${p.arquivo}</span>
+        </label>
+      `).join("");
+    }
+
+    renderizarLista();
 
     lista.addEventListener("change", (ev) => {
       const alvo = ev.target;
-      if (alvo.dataset.arquivo) {
+      if (alvo.dataset.arquivo && alvo.type === "checkbox") {
         if (alvo.checked) visiveis.add(alvo.dataset.arquivo);
         else visiveis.delete(alvo.dataset.arquivo);
         salvarPaginasVisiveis([...visiveis]);
       }
+    });
+
+    // Reordenação por drag-and-drop das linhas.
+    let arquivoArrastado = null;
+
+    lista.addEventListener("dragstart", (ev) => {
+      const item = ev.target.closest(".item-pagina");
+      if (!item) return;
+      arquivoArrastado = item.dataset.arquivo;
+      item.classList.add("item-pagina--arrastando");
+      ev.dataTransfer.effectAllowed = "move";
+    });
+
+    lista.addEventListener("dragend", (ev) => {
+      const item = ev.target.closest(".item-pagina");
+      if (item) item.classList.remove("item-pagina--arrastando");
+      lista.querySelectorAll(".item-pagina--sobre").forEach((el) => el.classList.remove("item-pagina--sobre"));
+      arquivoArrastado = null;
+    });
+
+    lista.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+      const item = ev.target.closest(".item-pagina");
+      lista.querySelectorAll(".item-pagina--sobre").forEach((el) => el.classList.remove("item-pagina--sobre"));
+      if (item && item.dataset.arquivo !== arquivoArrastado) item.classList.add("item-pagina--sobre");
+    });
+
+    lista.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      const item = ev.target.closest(".item-pagina");
+      if (!item || !arquivoArrastado || item.dataset.arquivo === arquivoArrastado) return;
+
+      const origem = ordem.findIndex((p) => p.arquivo === arquivoArrastado);
+      const destino = ordem.findIndex((p) => p.arquivo === item.dataset.arquivo);
+      if (origem === -1 || destino === -1) return;
+
+      const [pagina] = ordem.splice(origem, 1);
+      ordem.splice(destino, 0, pagina);
+
+      salvarPaginasOrdem(ordem.map((p) => p.arquivo));
+      renderizarLista();
     });
   </script>
 </body>
