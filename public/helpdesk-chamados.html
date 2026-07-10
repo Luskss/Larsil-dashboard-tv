@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Helpdesk — Chamados</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="./tema.css">
+  <style>
+    /* Tema, toggle e botões vêm de tema.css. Aqui, só o CSS desta página. */
+
+    /* A página inteira cabe na janela (painel de TV): o corpo trava a
+       altura, as colunas dividem o espaço e o excesso de cards rola
+       DENTRO da coluna — a página em si nunca rola. */
+    html, body { height: 100%; }
+    body { overflow: hidden; }
+    .pagina {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .painel {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: 1.5rem;
+      padding: 1.25rem;
+    }
+
+    /* Três colunas (Abertos / Em atendimento / Resolvidos), estilo kanban. */
+    .colunas {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      align-items: stretch;
+    }
+    @media (max-width: 900px) { .colunas { grid-template-columns: 1fr; } }
+
+    /* Cada coluna é um flex vertical: título fixo, cards no espaço restante. */
+    .colunas > .painel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .coluna__cards {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .coluna__titulo {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--cor-status, var(--text));
+      margin-bottom: 1rem;
+    }
+    .coluna__bolinha {
+      width: 10px; height: 10px;
+      border-radius: 999px;
+      background: var(--cor-status, var(--text-dim));
+      flex: 0 0 auto;
+    }
+    .coluna__qtd {
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-dim);
+    }
+    .coluna__vazia { color: var(--text-dim); font-size: .9rem; }
+
+    /* Card de chamado: mesmo padrão dos blocos internos das outras páginas
+       (surface-2 + borda fina). */
+    .chamado {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      padding: .75rem .85rem;
+    }
+    .chamado + .chamado { margin-top: .75rem; }
+    .chamado__topo {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      font-size: .75rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+    .chamado__prioridade {
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--cor-prioridade, var(--text-dim));
+    }
+    .chamado__titulo {
+      margin-top: .25rem;
+      font-weight: 600;
+      line-height: 1.3;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .chamado__pessoa {
+      margin-top: .4rem;
+      font-size: .8rem;
+      color: var(--text-dim);
+    }
+    .chamado__pessoa strong { color: var(--text); font-weight: 600; }
+
+    /* Estado de aviso (banco não configurado / erro de consulta). */
+    .chamados-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .chamados-aviso--visivel { display: block; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="pagina w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Helpdesk</h1>
+    </div>
+
+    <div id="chamados-aviso" class="chamados-aviso" role="alert"></div>
+
+    <!-- Colunas de chamados por status (preenchidas pelo helpdesk-chamados.js) -->
+    <div id="colunas" class="colunas mt-3"></div>
+  </div>
+
+  <script src="./helpdesk-chamados.js" type="module"></script>
+</body>
+</html>

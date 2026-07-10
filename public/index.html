@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor de Serviços</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="./tema.css">
+  <style>
+    /* Tema, toggle e botões vêm de tema.css. Aqui, só o CSS desta página. */
+
+    /* A página inteira cabe na janela: nada de rolagem (painel de TV).
+       O main.js dimensiona as fileiras do grid para caber no espaço útil. */
+    html, body { height: 100%; }
+    body { overflow: hidden; }
+
+    /* ===== Dashboard (esqueleto do mockup) =====
+       Grid ÚNICO: tudo é bloco. O relógio é um bloco que ocupa 3x2 células;
+       os demais são placeholders. A altura das fileiras é igual à largura da
+       coluna (célula quadrada), ajustada via JS (grid-auto-rows).
+
+       Tamanhos de bloco (combine as classes):
+         (nenhuma)     -> 1x1
+         .bloco--w2    -> 2 colunas
+         .bloco--h2    -> 2 fileiras
+         .bloco--w2h2  -> 2x2
+         .bloco--w3h2  -> 3x2 (usado pelo relógio)                       */
+    .tiles {
+      margin-top: 1rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 1rem;
+      grid-auto-flow: dense; /* preenche buracos ao redor dos blocos grandes */
+    }
+    .tile {
+      border-radius: 1.5rem;
+      background: var(--surface);
+      border: 2px solid var(--border);
+    }
+    .bloco--w2   { grid-column: span 2; }
+    .bloco--h2   { grid-row: span 2; }
+    .bloco--w2h2 { grid-column: span 2; grid-row: span 2; }
+    .bloco--w3h2 { grid-column: span 3; grid-row: span 2; }
+    .bloco--w3h4 { grid-column: span 3; grid-row: span 4; }
+    .bloco--w4h4 { grid-column: span 4; grid-row: span 4; }
+
+    /* Posições fixas (o dense flow sozinho encostaria o clima ao lado do
+       relógio; aqui pregamos cada um na sua célula). Relógio 5x3 no topo,
+       clima logo abaixo. */
+    .pos--relogio { grid-column: 1 / span 5; grid-row: 2 / span 3; }
+    .pos--clima   { grid-column: 1 / span 7; grid-row: 5 / span 3; }
+
+    /* Widget real no estilo "pílula" do mockup (relógio + clima).
+       container-type permite dimensionar o conteúdo pela largura do PRÓPRIO
+       card (unidade cqw), e não da janela — o relógio nunca vaza da borda. */
+    .widget {
+      border: 2px solid var(--border);
+      border-radius: 1.5rem;
+      padding: 1rem 1.5rem;
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      container-type: inline-size;
+      overflow: hidden;
+    }
+    .relogio {
+      font-size: clamp(1.5rem, 22cqw, 9rem);
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: .02em;
+    }
+    .saudacao {
+      margin-top: .5rem;
+      font-size: clamp(.9rem, 10cqw, 2.25rem);
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    /* Painel de clima (estilo lovable): clima de agora em cima — temperatura
+       grande + sensação/umidade/vento — e a previsão da semana em chips
+       embaixo. As fontes escalam pela largura do card (cqw). */
+    .clima-widget {
+      flex-direction: column;
+      justify-content: space-between;
+      gap: .85rem;
+    }
+    .clima-atual {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      min-width: 0;
+    }
+    .clima-atual__temp {
+      font-size: clamp(2.25rem, 9cqw, 5rem);
+      font-weight: 300;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .clima-atual__rotulo {
+      font-size: .75rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .clima-atual__cond { font-size: clamp(.95rem, 3cqw, 1.35rem); font-weight: 600; }
+    .clima-detalhes {
+      display: flex;
+      gap: clamp(.75rem, 4cqw, 2.5rem);
+      margin-left: auto;
+      text-align: right;
+    }
+    .clima-detalhes span { display: block; font-size: .72rem; color: var(--text-dim); }
+    .clima-detalhes strong { font-size: clamp(1rem, 3cqw, 1.5rem); font-weight: 700; }
+
+    /* Fase da lua: disco escuro fixo com o "lado claro" deslizando por cima
+       (a fração visível é a iluminação — mesma técnica do lovable). */
+    .clima-lua { display: flex; align-items: center; gap: .6rem; }
+    .clima-lua__disco {
+      width: 2.6rem; height: 2.6rem;
+      border-radius: 50%;
+      position: relative;
+      overflow: hidden;
+      background: #0c130d;
+      border: 1px solid var(--border);
+      flex: 0 0 auto;
+    }
+    .clima-lua__luz {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: radial-gradient(circle at 38% 34%, #f4f7ea 0%, #d4dcbd 68%, #bcc7a3 100%);
+    }
+    .clima-lua__nome { display: block; font-size: .85rem; font-weight: 600; white-space: nowrap; }
+    .clima-lua__pct { display: block; font-size: .72rem; color: var(--text-dim); white-space: nowrap; }
+    .clima-semana { display: flex; gap: .6rem; flex: 1; min-height: 0; }
+    .clima-dia {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden; /* com o rem maior, o texto não vaza do chip */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: .35rem;
+      padding: .6rem .35rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+    }
+    .clima-dia__nome { font-size: .85rem; font-weight: 700; color: var(--text-dim); }
+    /* nowrap: máxima e mínima sempre na mesma linha, em todos os chips */
+    .clima-dia__temps { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .clima-dia__temps small { font-weight: 500; color: var(--text-dim); }
+    .clima__icone { width: 1.75rem; height: 1.75rem; flex: 0 0 auto; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-10xl mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-end mb-3">
+      <div class="flex items-center gap-3">
+        <button id="atualizar-btn" class="btn-icone" type="button" aria-label="Atualizar status">
+          <svg class="icone-reload" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M23 4v6h-6"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Grid único do dashboard: widgets reais + placeholders, todos blocos. -->
+    <div id="tiles" class="tiles">
+      <!-- Relógio + saudação: 5x3 células, fixo no topo esquerdo. -->
+      <div class="widget pos--relogio anima-surgir" data-bloco="15" style="--ordem: 0;">
+        <div id="relogio" class="relogio">--:--:--</div>
+        <div id="saudacao" class="saudacao">&nbsp;</div>
+      </div>
+
+      <!-- Clima: 7x3 células abaixo do relógio — agora + previsão da semana. -->
+      <div class="widget clima-widget pos--clima anima-surgir" data-bloco="21" style="--ordem: 1;">
+        <div class="clima-atual">
+          <div id="clima-temp" class="clima-atual__temp">--°</div>
+          <div>
+            <div class="clima-atual__rotulo">Clima agora</div>
+            <div id="clima-cond" class="clima-atual__cond">Configure sua cidade</div>
+          </div>
+          <div class="clima-detalhes">
+            <div><span>Sensação</span><strong id="clima-sensacao">—</strong></div>
+            <div><span>Umidade</span><strong id="clima-umidade">—</strong></div>
+            <div><span>Vento</span><strong id="clima-vento">—</strong></div>
+          </div>
+          <div class="clima-lua">
+            <div class="clima-lua__disco"><div class="clima-lua__luz"></div></div>
+            <div>
+              <span class="clima-lua__nome">—</span>
+              <span class="clima-lua__pct">—</span>
+            </div>
+          </div>
+        </div>
+        <div id="clima-semana" class="clima-semana"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./main.js" type="module"></script>
+</body>
+</html>

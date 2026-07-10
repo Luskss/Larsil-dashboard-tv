@@ -1,0 +1,87 @@
+/* ===== Tema compartilhado do site =====
+   Único lugar onde as cores são definidas — todas as páginas linkam este arquivo.
+   Tema fixo (escuro). Estilo "vidro" do projeto lovable: o fundo é um
+   gradiente radial verde-floresta e os painéis são camadas translúcidas
+   de branco por cima (por isso os rgba). */
+:root {
+  --critical: rgb(171, 74, 74);   /* vermelho */
+  --alert:    rgb(243, 187, 55);   /* amarelo  */
+  --success:  rgb(93, 183, 71);   /* verde    */
+
+  --bg:        #0f1711;
+  --bg-gradiente: radial-gradient(130% 130% at 84% 0%, #1e2c20 0%, #16211a 55%, #0f1711 100%);
+  --surface:   rgba(238, 243, 234, 0.045);
+  --surface-2: rgba(238, 243, 234, 0.08);
+  --border:    rgba(238, 243, 234, 0.12);
+  --text:      #eef3ea;
+  --text-dim:  rgba(238, 243, 234, 0.55);
+}
+
+/* Tipografia maior para leitura de longe (painel de TV): o rem raiz cresce
+   com a largura da tela — 18px num notebook, ~21px numa TV Full HD, teto de
+   22px. Tudo que usa rem (inclusive as classes do Tailwind) escala junto;
+   os textos grandes (relógio, clima, KPIs) têm clamp próprio preso à
+   largura do container (cqw) ou da tela (vw), então não vazam das boxes.
+   Controles em px (toggle, bolinhas) ficam do mesmo tamanho de propósito. */
+html { font-size: clamp(16px, 12px + 0.45vw, 22px); }
+
+body {
+  background-color: var(--bg);
+  background-image: var(--bg-gradiente);
+  background-attachment: fixed; /* o gradiente não rola junto com a página */
+  color: var(--text);
+}
+
+/* ===== Animações compartilhadas =====
+   .anima-surgir: entrada em cascata — defina --ordem no elemento para o
+   atraso (60ms por passo). .anima-pop: escala suave ao aparecer (donut).
+   Os números de KPI sobem contando via animarNumero (animacoes.js). */
+@keyframes surgir {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+.anima-surgir {
+  animation: surgir .5s cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: calc(var(--ordem, 0) * 60ms);
+}
+.anima-pop { animation: pop .45s cubic-bezier(.22, 1, .36, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .anima-surgir, .anima-pop { animation: none; }
+}
+
+/* ===== Botões compartilhados ===== */
+.btn {
+  padding: .5rem 1rem; border-radius: .5rem; font-weight: 600;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn:hover { background: var(--border); }
+.btn:disabled { opacity: .6; cursor: default; }
+.btn--primary { background: var(--success); border-color: var(--success); color: #0d1410; }
+.btn--primary:hover { filter: brightness(1.08); background: var(--success); }
+.btn--danger { background: var(--critical); border-color: var(--critical); color: #fff; }
+.btn--danger:hover { filter: brightness(1.08); background: var(--critical); }
+
+/* Botão circular com ícone (reload etc.), no mesmo tamanho do toggle. */
+.btn-icone {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 2px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+  transition: background .2s, border-color .2s;
+}
+.btn-icone:hover { background: var(--border); }
+.btn-icone:disabled { cursor: default; }
+.btn-icone svg { width: 16px; height: 16px; }
+/* Gira o ícone enquanto está consultando. */
+.btn-icone.girando svg { animation: girar 0.8s linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }

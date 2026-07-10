@@ -1,0 +1,60 @@
+// Consulta o status do Downdetector com um navegador headless (Puppeteer).
+//
+// O site fica atrás da Cloudflare, que exige executar um desafio JavaScript —
+// por isso um `fetch` simples (ou proxy de CORS) recebe 403. Um navegador real
+// resolve o desafio, do mesmo jeito que a WebView oculta fazia na versão Tauri.
+//
+// A página embute o status no HTML como `status: '<valor>'`
+// (success / warning / danger). Basta ler o HTML já renderizado.
+
+import puppeteer from "puppeteer";
+
+const STATUS_DOWNDETECTOR = {
+  success: "Sem problemas",
+  warning: "Problemas possíveis",
+  danger: "Problemas detectados",
+};
+
+// Um único navegador reaproveitado entre requisições (subir um Chromium por
+// consulta é caro). Cada consulta abre e fecha só uma aba.
+let navegadorPromise = null;
+function obterNavegador() {
+  if (!navegadorPromise) {
+    navegadorPromise = puppeteer
+      .launch({
+        headless: true,
+        // No container (Dockerfile) usamos o Chrome já instalado na imagem.
+        // Localmente a variável não existe e o Puppeteer usa o seu próprio.
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      })
+      .catch((erro) => {
+        // Se a inicialização falhar, zera para tentar de novo na próxima chamada.
+        navegadorPromise = null;
+        throw erro;
+      });
+  }
+  return navegadorPromise;
+}
+
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+export async function consultarStatus(slug) {
+  const alvo = `https://downdetector.com.br/fora-do-ar/${encodeURIComponent(slug)}/`;
+  const navegador = await obterNavegador();
+  const pagina = await navegador.newPage();
+
+  try {
+    await pagina.setUserAgent(UA);
+    await pagina.goto(alvo, { waitUntil: "networkidle2", timeout: 30000 });
+
+    const html = await pagina.content();
+    const match = html.match(/status\s*:\s*['"](success|warning|danger)['"]/);
+    if (!match) throw new Error("Status não encontrado");
+    return STATUS_DOWNDETECTOR[match[1]];
+  } finally {
+    await pagina.close();
+  }
+}

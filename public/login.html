@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="./tema.css">
+  <style>
+    /* Tema e botões vêm de tema.css. Aqui, só o CSS desta página. */
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card-login {
+      width: 100%;
+      max-width: 22rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      padding: 2rem;
+    }
+    .campo {
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+      margin-bottom: 1rem;
+    }
+    .campo label { font-size: .85rem; color: var(--text-dim); }
+    .campo input {
+      padding: .65rem .9rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    .btn-entrar {
+      width: 100%;
+      padding: .7rem;
+      border-radius: .75rem;
+      border: 1px solid var(--success);
+      background: var(--success);
+      color: #0d1410;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: .5rem;
+    }
+    .btn-entrar:hover { filter: brightness(1.08); }
+    .btn-entrar:disabled { opacity: .6; cursor: default; }
+    .erro-login {
+      font-size: .85rem;
+      color: var(--critical);
+      min-height: 1.2em;
+      margin-top: .75rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <form id="form-login" class="card-login">
+    <h1 class="text-xl font-extrabold tracking-wide uppercase mb-6 text-center">Entrar</h1>
+    <div class="campo">
+      <label for="usuario">Usuário</label>
+      <input type="text" id="usuario" name="usuario" autocomplete="username" required autofocus>
+    </div>
+    <div class="campo">
+      <label for="senha">Senha</label>
+      <input type="password" id="senha" name="senha" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn-entrar">Entrar</button>
+    <div id="erro-login" class="erro-login"></div>
+  </form>
+
+  <script type="module">
+    const form = document.querySelector("#form-login");
+    const erroEl = document.querySelector("#erro-login");
+    const botao = form.querySelector(".btn-entrar");
+
+    // Se já tiver uma sessão válida, volta direto para o dashboard.
+    const proximo = new URLSearchParams(location.search).get("proximo") || "./index.html";
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      erroEl.textContent = "";
+      botao.disabled = true;
+      try {
+        const resp = await fetch("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            usuario: form.usuario.value.trim(),
+            senha: form.senha.value,
+          }),
+        });
+        const dados = await resp.json();
+        if (!resp.ok) {
+          erroEl.textContent = dados.erro || "Usuário ou senha inválidos";
+          return;
+        }
+        location.href = proximo;
+      } catch {
+        erroEl.textContent = "Erro ao conectar com o servidor.";
+      } finally {
+        botao.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

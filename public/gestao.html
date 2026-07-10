@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="./tema.css">
+  <style>
+    /* Tema, toggle e botões vêm de tema.css. Aqui, só o CSS desta página. */
+    .card-cfg { background: var(--surface); border: 1px solid var(--border); }
+
+    .lista-paginas { display: flex; flex-direction: column; gap: .5rem; }
+    .item-pagina {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      padding: .75rem 1rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .item-pagina input[type="checkbox"] {
+      width: 18px; height: 18px;
+      accent-color: var(--success);
+      flex: 0 0 auto;
+    }
+    .item-pagina__rotulo { font-weight: 600; }
+    .item-pagina__arquivo {
+      font-size: .8rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .campo-cidade {
+      display: flex;
+      gap: .5rem;
+      max-width: 24rem;
+    }
+    .campo-cidade input {
+      flex: 1;
+      padding: .6rem .9rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    .campo-cidade button {
+      padding: .6rem 1.2rem;
+      border-radius: .75rem;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .campo-cidade button:hover { background: var(--surface); }
+    .cidade-status {
+      font-size: .85rem;
+      color: var(--text-dim);
+      margin-top: .5rem;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-[1600px] mx-auto p-6">
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Gestão</h1>
+    </div>
+
+    <div class="card-cfg rounded p-4 mb-6">
+      <h2 class="font-bold mb-1">Cidade do clima</h2>
+      <p class="text-sm mb-4" style="color: var(--text-dim);">
+        Usada pelo widget de clima no Dashboard (temperatura atual e previsão de amanhã).
+      </p>
+      <form id="form-cidade" class="campo-cidade">
+        <input type="text" id="input-cidade" placeholder="Ex.: São Paulo" autocomplete="off">
+        <button type="submit">Salvar</button>
+      </form>
+      <div id="cidade-status" class="cidade-status"></div>
+    </div>
+
+    <div class="card-cfg rounded p-4">
+      <h2 class="font-bold mb-1">Páginas visíveis na navegação</h2>
+      <p class="text-sm mb-4" style="color: var(--text-dim);">
+        Desmarque uma página para tirá-la da barra de bolinhas do rodapé (ela continua acessível pela URL).
+      </p>
+      <div id="lista-paginas" class="lista-paginas"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { PAGINAS, paginasVisiveis, salvarPaginasVisiveis } from "./paginacao.js";
+    import { getConfig, setConfig } from "./downdetector.js";
+
+    // Sem montarPaginacao(): esta página fica sempre fora da navegação/transição
+    // (paginacao.js trata gestao.html como oculta por padrão).
+
+    // ===== Cidade do clima =====
+    const inputCidade = document.querySelector("#input-cidade");
+    const statusCidade = document.querySelector("#cidade-status");
+
+    getConfig("cidade").then((cidade) => {
+      inputCidade.value = cidade || "";
+    });
+
+    document.querySelector("#form-cidade").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      statusCidade.textContent = "Salvando...";
+      try {
+        await setConfig("cidade", inputCidade.value.trim());
+        statusCidade.textContent = "Cidade salva.";
+      } catch {
+        statusCidade.textContent = "Erro ao salvar a cidade.";
+      }
+    });
+
+    const lista = document.querySelector("#lista-paginas");
+    const visiveis = new Set(paginasVisiveis());
+
+    lista.innerHTML = PAGINAS.map((p) => `
+      <label class="item-pagina">
+        <input type="checkbox" data-arquivo="${p.arquivo}" ${visiveis.has(p.arquivo) ? "checked" : ""}>
+        <span class="item-pagina__rotulo">${p.rotulo}</span>
+        <span class="item-pagina__arquivo ml-auto">${p.arquivo}</span>
+      </label>
+    `).join("");
+
+    lista.addEventListener("change", (ev) => {
+      const alvo = ev.target;
+      if (alvo.dataset.arquivo) {
+        if (alvo.checked) visiveis.add(alvo.dataset.arquivo);
+        else visiveis.delete(alvo.dataset.arquivo);
+        salvarPaginasVisiveis([...visiveis]);
+      }
+    });
+  </script>
+</body>
+</html>
