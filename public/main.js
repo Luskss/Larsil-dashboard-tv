@@ -8,13 +8,23 @@ const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // 5 minutos
 // ===== Relógio =====
 function iniciarRelogio() {
   const el = document.querySelector("#relogio");
+
   function tick() {
     const agora = new Date();
-    const hh = String(agora.getHours()).padStart(2, "0");
-    const mm = String(agora.getMinutes()).padStart(2, "0");
-    const ss = String(agora.getSeconds()).padStart(2, "0");
-    el.textContent = `${hh}:${mm}:${ss}`;
+    
+    // Força o JavaScript a formatar a hora no fuso de Brasília (America/Sao_Paulo)
+    const horaBrasilia = agora.toLocaleTimeString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+
+    el.textContent = horaBrasilia;
   }
+
+  // Não esqueça de rodar a primeira vez e definir o intervalo!
   tick();
   setInterval(tick, 1000);
 }
