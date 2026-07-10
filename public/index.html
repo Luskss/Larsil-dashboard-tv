@@ -351,11 +351,13 @@
          fendas na costura com o Brasil detalhado (50m) contra os vizinhos
          (110m), que não coincidem exatamente. As linhas de fronteira visíveis
          ficam por conta do contorno verde do próprio Brasil, desenhado por
-         cima. */
+         cima. Sem non-scaling-stroke de propósito: com ele o navegador refaz o
+         traço de todos os países a cada mudança de zoom/rotação, o que derruba
+         o frame rate em GPUs fracas (Fire TV/Silk). O traço geográfico fecha a
+         costura do mesmo jeito. */
       stroke: var(--surface-2);
       stroke-width: .6;
       stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
     }
     /* Base de "costura": a silhueta do Brasil pintada com a COR DOS VIZINHOS e
        um traço largo geográfico da mesma cor. Fica sob o Brasil verde e invade
@@ -380,18 +382,17 @@
 
     /* Marcador de projeto: pino + halo pulsante. Fica DENTRO do <g> do mapa
        (herda o transform e gruda na geografia); o raio é contra-escalado por JS
-       para não inflar com o zoom. O pulso escala só o halo, a partir do centro. */
+       para não inflar com o zoom. O pulso anima SÓ a opacidade: animar
+       transform/scale em SVG não é composto em navegadores fracos (Silk) e
+       repintava o mapa inteiro 60x/s para sempre. */
     .mapa-pino__halo {
       fill: var(--success);
       opacity: .28;
-      transform-origin: center;
-      transform-box: fill-box;
-      animation: mapa-pulso 2.6s ease-out infinite;
+      animation: mapa-pulso 2.6s ease-in-out infinite;
     }
     @keyframes mapa-pulso {
-      0%   { transform: scale(.5); opacity: .45; }
-      70%  { transform: scale(2.4); opacity: 0; }
-      100% { transform: scale(2.4); opacity: 0; }
+      0%, 100% { opacity: .12; }
+      50%      { opacity: .45; }
     }
     .mapa-pino__ponto {
       fill: var(--success);

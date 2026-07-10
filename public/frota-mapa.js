@@ -10,7 +10,9 @@
 //   x = (lon + 180) / 360 * 1000      y = (90 - lat) / 180 * 500
 // Toda a animação é um transform no <g> do mundo (rotação + zoom), então o
 // layout da página nunca é tocado. Marcadores e rótulos ficam em coordenada de
-// TELA, recalculados a cada quadro, para não distorcerem com o zoom.
+// TELA, recalculados no fim da animação e em cada resize (durante o giro/zoom
+// eles estão ocultos — só o transform do <g> muda por quadro, o mínimo que um
+// navegador fraco como o Amazon Silk consegue repintar).
 
 import { consultarFrotaLocalizacao } from "./downdetector.js";
 
@@ -183,7 +185,7 @@ async function montarMapa() {
     `<svg viewBox="0 0 ${LARGURA} ${ALTURA}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
        <g id="mapa-mundo">
          <g>${paths}${brasilBase}${brasilTopo}</g>
-         <g transform="translate(${LARGURA} 0)">${paths}${brasilBase}${brasilTopo}</g>
+         <g id="mapa-copia" transform="translate(${LARGURA} 0)">${paths}${brasilBase}${brasilTopo}</g>
          <g id="mapa-pinos"></g>
        </g>
      </svg>
@@ -243,6 +245,12 @@ function geoParaTela(lon, lat, t) {
 // ===== Marcadores + rótulos =====
 let pontosAtuais = [];
 
+// Cache de elementos e medidas dos pinos/rótulos/linhas, reconstruído a cada
+// desenharPinos(). reposicionar() roda em resize e no fim da animação; pagar
+// querySelector + offsetWidth por pino a cada chamada força reflow síncrono e
+// derruba o frame rate em aparelhos fracos (Fire TV/Silk).
+let refs = null;
+
 function desenharPinos() {
   const gPinos = palco.querySelector("#mapa-pinos");
   const gLinhas = palco.querySelector("#mapa-linhas");
@@ -275,6 +283,16 @@ function desenharPinos() {
       <div class="mapa-rotulo__classes">${classes}</div>
     </div>`;
   }).join("");
+
+  refs = {
+    pinos: [...gPinos.querySelectorAll(".mapa-pino")].map((g) => ({
+      ponto: g.querySelector(".mapa-pino__ponto"),
+      halo: g.querySelector(".mapa-pino__halo"),
+    })),
+    linhas: [...gLinhas.querySelectorAll(".mapa-linha")],
+    cards: [...rotulos.querySelectorAll(".mapa-rotulo")],
+    medidas: pontosAtuais.map(() => null), // {w,h} de cada card, medido 1x
+  };
 }
 
 // "CAMINHAO PIPA" -> "Caminhao Pipa" (classes vêm em caixa alta do banco).
@@ -291,20 +309,13 @@ function tituloClasse(s) {
 // Rótulos e linhas: espaço de TELA (px), com declutter vertical para não
 // empilharem quando várias frentes caem quase no mesmo ponto.
 function reposicionar(t) {
-  const gPinos = palco.querySelector("#mapa-pinos");
-  const gLinhas = palco.querySelector("#mapa-linhas");
-  const rotulos = palco.querySelector("#mapa-rotulos");
-  if (!gPinos || !rotulos || !gLinhas) return;
+  if (!refs) return;
 
   const escalaSlice = escalaDoSlice();
   const escalaTotal = t.escala * escalaSlice;
 
   // 1) Pinos na geografia; raio contra-escalado para ~R_PONTO px na tela.
-  pontosAtuais.forEach((p, i) => {
-    const g = gPinos.querySelector(`[data-i="${i}"]`);
-    if (!g) return;
-    const ponto = g.querySelector(".mapa-pino__ponto");
-    const halo = g.querySelector(".mapa-pino__halo");
+  refs.pinos.forEach(({ ponto, halo }) => {
     if (ponto) ponto.setAttribute("r", (R_PONTO / escalaTotal).toFixed(3));
     if (halo) halo.setAttribute("r", (R_HALO / escalaTotal).toFixed(3));
     // stroke também escala com o mundo; compensa para ~1.5px de tela.
@@ -319,20 +330,28 @@ function reposicionar(t) {
   // interna do card (o lado voltado para o centro). cx/cy = centro da caixa;
   // ax/ay = âncora (pino); lado = -1 (esquerda) | +1 (direita).
   const caixas = pontosAtuais.map((p, i) => {
-    const el = rotulos.querySelector(`[data-i="${i}"]`);
-    const h = el ? el.offsetHeight || 40 : 40;
-    const w = el ? el.offsetWidth || 150 : 150;
-    return { i, w, h, ax: ancoras[i].x, ay: ancoras[i].y, cx: 0, cy: 0, lado: 0 };
+    // Medida do card memorizada: offsetWidth/Height forçam reflow síncrono, e
+    // só mudam quando desenharPinos() refaz o HTML. Se a vista estava oculta
+    // (mede 0), usa fallback sem memorizar e tenta de novo na próxima.
+    let m = refs.medidas[i];
+    if (!m) {
+      const el = refs.cards[i];
+      const w = el ? el.offsetWidth : 0;
+      const h = el ? el.offsetHeight : 0;
+      m = { w: w || 150, h: h || 40 };
+      if (w) refs.medidas[i] = m;
+    }
+    return { i, w: m.w, h: m.h, ax: ancoras[i].x, ay: ancoras[i].y, cx: 0, cy: 0, lado: 0 };
   });
   espalharCaixas(caixas);
 
   caixas.forEach((c) => {
-    const el = rotulos.querySelector(`[data-i="${c.i}"]`);
+    const el = refs.cards[c.i];
     if (el) {
       el.style.left = `${c.cx}px`;   // translateX(-50%) no CSS centraliza
       el.style.top = `${(c.cy - c.h / 2).toFixed(1)}px`;
     }
-    const linha = gLinhas.querySelector(`[data-i="${c.i}"]`);
+    const linha = refs.linhas[c.i];
     if (linha) {
       // Linha em cotovelo: borda interna do card -> calha (gutter) na altura do
       // card -> calha na altura do pino -> pino. Como a parte vertical corre na
@@ -504,25 +523,43 @@ let jaAnimouNestaVisita = false;
 function animarAbertura() {
   cancelAnimationFrame(animId);
   const semMovimento = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const copia = palco.querySelector("#mapa-copia");
 
   // Visão global inicial (mundo inteiro enquadrado) e destino (região da frota).
   const global = transformParaBBox({ oeste: -180, leste: 180, norte: 84, sul: -56 });
   const destino = transformParaBBox(alvoBBox);
 
-  if (semMovimento) {
+  // Fim de animação (ou modo sem movimento): a 2ª cópia do mundo só serve ao
+  // giro — fora dele, sai do render (~180 paths a menos para repintar, o que
+  // pesa em GPUs fracas como a do Fire TV/Silk). Pinos e rótulos só são
+  // posicionados aqui: durante o giro/zoom estão ocultos (ocultarPinos), então
+  // reposicioná-los por quadro seria reflow jogado fora.
+  const finalizar = () => {
+    if (copia) copia.setAttribute("display", "none");
     aplicarTransform(destino);
     reposicionar(destino);
+  };
+
+  if (semMovimento) {
+    finalizar();
     revelarPinos(true);
     return;
   }
 
+  if (copia) copia.removeAttribute("display"); // o giro precisa da cópia
   ocultarPinos();
   const inicio = performance.now();
 
   function quadro(agora) {
     const dt = agora - inicio;
-    let t;
 
+    if (dt >= T_GIRO + T_ZOOM) {
+      finalizar();
+      revelarPinos(false);
+      return; // fim da animação; resize/reposicionamento seguem sob demanda
+    }
+
+    let t;
     if (dt < T_GIRO) {
       // Rotação: desliza o mundo uma volta horizontal, desacelerando. O mapa é
       // "envolvente" — deslocar por LARGURA equivale a 360°. Some meia volta e
@@ -530,7 +567,7 @@ function animarAbertura() {
       const p = easeOut(dt / T_GIRO);
       const giro = (1 - p) * LARGURA * global.escala; // volta -> 0
       t = { escala: global.escala, tx: global.tx - giro, ty: global.ty };
-    } else if (dt < T_GIRO + T_ZOOM) {
+    } else {
       // Zoom: interpola global -> região da frota.
       const p = easeInOut((dt - T_GIRO) / T_ZOOM);
       t = {
@@ -538,17 +575,10 @@ function animarAbertura() {
         tx: global.tx + (destino.tx - global.tx) * p,
         ty: global.ty + (destino.ty - global.ty) * p,
       };
-    } else {
-      t = destino;
     }
 
+    // Só o transform do <g> muda por quadro — é o mínimo repintável.
     aplicarTransform(t);
-    reposicionar(t);
-
-    if (dt >= T_GIRO + T_ZOOM) {
-      revelarPinos(false);
-      return; // fim da animação; resize/reposicionamento seguem sob demanda
-    }
     animId = requestAnimationFrame(quadro);
   }
   animId = requestAnimationFrame(quadro);
@@ -616,6 +646,7 @@ async function atualizar() {
       palco.querySelector("#mapa-pinos").innerHTML = "";
       palco.querySelector("#mapa-linhas").innerHTML = "";
       document.querySelector("#mapa-rotulos").innerHTML = "";
+      refs = null; // cache apontaria para nós soltos do DOM
       return;
     }
 
