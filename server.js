@@ -78,11 +78,29 @@ app.get("/api/clima", async (req, res) => {
   const cidade = String(req.query.cidade || "").trim();
   if (!cidade) return res.status(400).json({ erro: "Informe a cidade" });
 
+  // Busca com timeout e retry: no Railway o egress para APIs externas às vezes
+  // falha de forma intermitente (rede/DNS do datacenter). Abortamos em 8s para
+  // não pendurar a resposta e tentamos de novo antes de desistir.
+  async function buscarJson(url, tentativas = 3) {
+    let ultimoErro;
+    for (let i = 0; i < tentativas; i++) {
+      try {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!resp.ok) throw new Error(`Open-Meteo respondeu ${resp.status}`);
+        return await resp.json();
+      } catch (erro) {
+        ultimoErro = erro;
+        if (i < tentativas - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+      }
+    }
+    throw ultimoErro;
+  }
+
   try {
     const geoUrl =
       "https://geocoding-api.open-meteo.com/v1/search?count=1&language=pt&name=" +
       encodeURIComponent(cidade);
-    const lugar = (await (await fetch(geoUrl)).json()).results?.[0];
+    const lugar = (await buscarJson(geoUrl)).results?.[0];
     if (!lugar) return res.status(404).json({ erro: "Cidade não encontrada" });
 
     const climaUrl =
@@ -91,7 +109,7 @@ app.get("/api/clima", async (req, res) => {
       "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code" +
       "&daily=weather_code,temperature_2m_max,temperature_2m_min" +
       "&timezone=auto&forecast_days=7";
-    const dados = await (await fetch(climaUrl)).json();
+    const dados = await buscarJson(climaUrl);
     const atual = dados.current;
     res.json({
       temperatura: atual.temperature_2m,
@@ -106,7 +124,8 @@ app.get("/api/clima", async (req, res) => {
         minima: dados.daily.temperature_2m_min?.[i],
       })),
     });
-  } catch {
+  } catch (erro) {
+    console.error("Erro ao consultar o clima:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o clima" });
   }
 });
