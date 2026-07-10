@@ -130,17 +130,30 @@ function quebrarNoAntimeridiano(anel) {
   return partes;
 }
 
-// Anéis geo -> path SVG ("d") na projeção equirretangular. O mesmo texto vale
-// para o canvas: new Path2D(d) aceita path data de SVG.
+// Anéis geo -> { d, bbox }: path SVG na projeção equirretangular (o mesmo
+// texto vale para o canvas: new Path2D(d) aceita path data de SVG) e o
+// retângulo envolvente no plano 1000x500. O bbox permite PULAR países fora do
+// enquadramento na hora de rasterizar — no zoom final só o Brasil e vizinhos
+// são visíveis, e desenhar o mundo inteiro era o que segurava o raster nítido
+// por ~2s no Silk depois do zoom.
 function caminhoDoPais(aneis) {
-  return aneis
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const d = aneis
     .flatMap((anel) => quebrarNoAntimeridiano(anel))
     .map((parte) =>
       parte
-        .map(([lon, lat], i) => `${i ? "L" : "M"}${projX(lon).toFixed(1)} ${projY(lat).toFixed(1)}`)
+        .map(([lon, lat], i) => {
+          const x = projX(lon), y = projY(lat);
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+          return `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
+        })
         .join("") + "Z"
     )
     .join("");
+  return { d, bbox: { x0, y0, x1, y1 } };
 }
 
 // Brasil em alta resolução (~1650 pontos no contorno principal, extraído do
@@ -170,15 +183,20 @@ async function montarMapa() {
   for (const geo of topo.objects.countries.geometries) {
     const ehBrasil = geo.id === "076" || /brazil|brasil/i.test(geo.properties?.name || "");
     if (brasilDetalhado && geo.id === "076") continue; // substituído pelo 50m
-    const d = caminhoDoPais(aneisDaGeometria(geo, arcos));
-    if (ehBrasil) brasil110m = new Path2D(d);
-    else paises.push(new Path2D(d));
+    const { d, bbox } = caminhoDoPais(aneisDaGeometria(geo, arcos));
+    const pais = { path: new Path2D(d), bbox };
+    if (ehBrasil) brasil110m = pais;
+    else paises.push(pais);
   }
 
+  // A costura reaproveita o MESMO Path2D do Brasil detalhado (só muda a cor).
+  const detalhado = brasilDetalhado
+    ? { path: new Path2D(brasilDetalhado.d), bbox: brasilDetalhado.bbox }
+    : null;
   render = {
     paises,
-    brasil: brasilDetalhado ? new Path2D(brasilDetalhado) : brasil110m,
-    costura: brasilDetalhado ? new Path2D(brasilDetalhado) : null,
+    brasil: detalhado || brasil110m,
+    costura: detalhado,
   };
 
   // Canvas do mundo + overlays de TELA (pinos, linhas-guia e rótulos em HTML,
@@ -294,39 +312,61 @@ function rasterizar(t, comCopia = false) {
   ctx.scale(t.escala, t.escala);
   ctx.lineJoin = "round";
 
-  const desenharMundo = () => {
+  // Culling: retângulo do plano 1000x500 visível no canvas para este
+  // transform (px -> plano: v = ((px - off)/escalaTela - t.t)/t.escala).
+  // Países cujo bbox cai fora dele nem são desenhados — no zoom final isso
+  // reduz o mundo inteiro a Brasil + vizinhos, e o raster nítido do fim da
+  // animação sai na hora em vez de segurar a imagem borrada por segundos.
+  const vis = {
+    x0: ((0 - offX) / escalaTela - t.tx) / t.escala,
+    y0: ((0 - offY) / escalaTela - t.ty) / t.escala,
+    x1: ((cssL - offX) / escalaTela - t.tx) / t.escala,
+    y1: ((cssA - offY) / escalaTela - t.ty) / t.escala,
+  };
+  const FOLGA = 2; // margem em unidades do plano (cobre traços na borda)
+  const visivel = (b, desloc) =>
+    b.x1 + desloc >= vis.x0 - FOLGA && b.x0 + desloc <= vis.x1 + FOLGA &&
+    b.y1 >= vis.y0 - FOLGA && b.y0 <= vis.y1 + FOLGA;
+
+  // `desloc` = deslocamento em X desta cópia do mundo (0 ou +LARGURA), usado
+  // só no teste de visibilidade (o desenho em si usa o translate do ctx).
+  const desenharMundo = (desloc) => {
     // Países comuns: traço da COR DO PREENCHIMENTO engorda cada país meio
     // traço para fora e fecha a costura com o Brasil detalhado (ver CSS).
     ctx.fillStyle = cores.pais.fill;
     ctx.strokeStyle = cores.pais.stroke;
     ctx.lineWidth = 0.6;
-    for (const p of render.paises) { ctx.fill(p); ctx.stroke(p); }
+    for (const p of render.paises) {
+      if (!visivel(p.bbox, desloc)) continue;
+      ctx.fill(p.path);
+      ctx.stroke(p.path);
+    }
 
     // Base de costura sob o Brasil: silhueta 50m na cor dos vizinhos, invade a
     // fenda 50m x 110m e a pinta de cor-de-país antes do Brasil verde por cima.
-    if (render.costura) {
+    if (render.costura && visivel(render.costura.bbox, desloc)) {
       ctx.fillStyle = cores.costura.fill;
       ctx.strokeStyle = cores.costura.stroke;
       ctx.lineWidth = 0.6;
-      ctx.fill(render.costura);
-      ctx.stroke(render.costura);
+      ctx.fill(render.costura.path);
+      ctx.stroke(render.costura.path);
     }
 
     // Brasil em destaque, traço com espessura constante DE TELA (~1.5px, o
     // equivalente do non-scaling-stroke da versão SVG).
-    if (render.brasil) {
+    if (render.brasil && visivel(render.brasil.bbox, desloc)) {
       ctx.fillStyle = cores.brasil.fill;
       ctx.strokeStyle = cores.brasil.stroke;
       ctx.lineWidth = 1.5 / (escalaTela * t.escala);
-      ctx.fill(render.brasil);
-      ctx.stroke(render.brasil);
+      ctx.fill(render.brasil.path);
+      ctx.stroke(render.brasil.path);
     }
   };
 
-  desenharMundo();
+  desenharMundo(0);
   if (comCopia) {
     ctx.translate(LARGURA, 0);
-    desenharMundo();
+    desenharMundo(LARGURA);
   }
   transformRaster = t;
 }
