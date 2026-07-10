@@ -51,6 +51,10 @@ function renderTiles() {
   const tilesEl = document.querySelector("#tiles");
 
   function preencher() {
+    // Vista oculta (SPA): as medidas viriam zeradas. O resize disparado por
+    // paginacao.js na troca de vista chama de novo quando ela aparecer.
+    if (!tilesEl.offsetParent) return;
+
     // Remove só os placeholders; os widgets reais ficam.
     tilesEl.querySelectorAll(".tile--vazio").forEach((t) => t.remove());
 

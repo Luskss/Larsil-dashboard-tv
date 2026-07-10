@@ -2,7 +2,6 @@
 // Dados vêm de /api/frota (SQL Server, dbo.FROTA) via consultarFrota().
 
 import { consultarFrota } from "./downdetector.js";
-import { montarPaginacao } from "./paginacao.js";
 import { animarNumero } from "./animacoes.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do dashboard
@@ -42,10 +41,14 @@ function corDoStatus(nome, proximoNeutro) {
 // As duas visões que o painel do donut alterna a cada 30 segundos.
 const VISOES = {
   status: {
+    titulo: "Frota por status",
+    subtitulo: "Veículos ativos por situação",
     itens: (dados) => dados.donut,
     cor: (nome, i, proximoNeutro) => corDoStatus(nome, proximoNeutro),
   },
   tipos: {
+    titulo: "Frota por tipo",
+    subtitulo: "Veículos ativos por classe/espécie",
     itens: (dados) => dados.tipos || [],
     cor: (_nome, i, proximoNeutro) => corDoTipo(i, proximoNeutro),
   },
@@ -214,14 +217,10 @@ async function atualizar() {
     desenharVisao();
     desenharCardsTipos(dados.tipos);
 
-    const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   } catch (erro) {
-    document.querySelector("#frota-atualizado").textContent = "Falha ao carregar";
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar os dados da frota.");
   }
 }
-
-montarPaginacao();
 
 // ===== Alternância status <-> tipos a cada 30s, com fade =====
 // Pausa enquanto o mouse está no painel, para não trocar durante uma leitura.

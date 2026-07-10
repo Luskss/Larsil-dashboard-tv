@@ -1,7 +1,6 @@
 // Página Ativos de TI: contagem por tipo (Notebooks, Monitores, Celulares,
 // Starlinks). Dados vêm de /api/ativos-ti (SQL Server, inventario.ATIVOS).
 
-import { montarPaginacao } from "./paginacao.js";
 import { animarNumero } from "./animacoes.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
@@ -24,7 +23,8 @@ function mostrarAviso(mensagem) {
 }
 
 function desenharCards(tipos) {
-  const alvo = document.querySelector("#tipos-cards");
+  // #ativos-cards: id próprio no SPA (#tipos-cards é da vista Frotas).
+  const alvo = document.querySelector("#ativos-cards");
   alvo.innerHTML = tipos.map((t, i) =>
     `<div class="painel kpi anima-surgir" style="--cor-kpi: ${CORES_TIPOS[i % CORES_TIPOS.length]}; --ordem: ${i};">
        <div class="kpi__valor">0</div>
@@ -49,8 +49,6 @@ async function atualizar() {
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar os dados de ativos de TI.");
   }
 }
-
-montarPaginacao();
 
 atualizar();
 setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);

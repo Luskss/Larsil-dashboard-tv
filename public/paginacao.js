@@ -1,18 +1,21 @@
-// Bolinhas de navegação entre as páginas, fixas no rodapé.
+// Bolinhas de navegação entre as vistas, fixas no rodapé.
 //
-// Componente compartilhado: cada página chama montarPaginacao() e o módulo
-// injeta o CSS e a barra. A bolinha da página atual vira uma "pílula" verde
-// com pulso; as outras são pontos clicáveis que levam à página.
+// O site é um SPA: todas as vistas vivem em <section> dentro do index.html
+// (ver lá) e trocar de "página" é só alternar a classe .vista--ativa — sem
+// navegação de verdade, para a barra do navegador da TV (Amazon Silk) não
+// aparecer a cada troca. Este módulo injeta o CSS, monta as bolinhas e cuida
+// da rotação automática. gestao.html fica fora do SPA (acesso só por URL).
 //
-// Quais páginas aparecem é configurável em gestao.html (guarda a escolha no
-// localStorage). Para adicionar uma página nova ao dashboard, inclua-a aqui
-// em PAGINAS — ela nasce visível por padrão.
+// Quais vistas aparecem é configurável em gestao.html (guarda a escolha no
+// localStorage, pela chave `arquivo` — nome herdado do tempo em que cada
+// vista era um HTML separado). Para adicionar uma vista nova, crie a
+// <section> no index.html e inclua-a aqui em PAGINAS.
 
 const CHAVE_VISIVEIS = "paginas-visiveis";
 
-// Rotação automática entre as páginas (estilo painel de TV, como no projeto
+// Rotação automática entre as vistas (estilo painel de TV, como no projeto
 // lovable): uma barra fina no rodapé enche durante o tempo abaixo e, ao
-// completar, navega para a próxima bolinha. Para mudar o ritmo, salve
+// completar, ativa a próxima bolinha. Para mudar o ritmo, salve
 // "rotacao-segundos" no localStorage (0 desliga).
 const CHAVE_ROTACAO = "rotacao-segundos";
 const ROTACAO_SEGUNDOS_PADRAO = 30;
@@ -25,15 +28,11 @@ function segundosRotacao() {
 }
 
 export const PAGINAS = [
-  { rotulo: "Dashboard", arquivo: "index.html" },
-  { rotulo: "Frotas", arquivo: "frotas-estatisticas.html" },
-  { rotulo: "Ativos de TI", arquivo: "ativos-ti.html" },
-  { rotulo: "Helpdesk", arquivo: "helpdesk-chamados.html" },
+  { rotulo: "Dashboard",    arquivo: "index.html",               vista: "vista-dashboard", hash: "#dashboard" },
+  { rotulo: "Frotas",       arquivo: "frotas-estatisticas.html", vista: "vista-frotas",    hash: "#frotas" },
+  { rotulo: "Ativos de TI", arquivo: "ativos-ti.html",           vista: "vista-ativos",    hash: "#ativos" },
+  { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },
 ];
-
-// Páginas que existem mas não entram na lista de escolha (sempre ocultas
-// da navegação, só acessíveis por URL direta).
-const OCULTAS_SEMPRE = ["gestao.html"];
 
 export function paginasVisiveis() {
   const salvo = localStorage.getItem(CHAVE_VISIVEIS);
@@ -77,6 +76,9 @@ const CSS = `
     display: block;
     width: 10px;
     height: 10px;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
     border-radius: 999px;
     background: var(--text-dim);
     opacity: .5;
@@ -105,19 +107,17 @@ const CSS = `
     100% { box-shadow: 0 0 0 0 transparent; }
   }
 
-  /* Entrada suave do conteúdo ao trocar de página; o padding no rodapé
-     garante que a barra fixa não cubra o fim de páginas roláveis. */
-  body {
-    animation: pagina-entrar .35s ease both;
-    padding-bottom: 4.5rem;
-  }
+  /* O padding no rodapé garante que a barra fixa não cubra o conteúdo.
+     A animação de entrada de cada vista (pagina-entrar) é aplicada em
+     .vista--ativa, no CSS do index.html — reexecuta a cada troca. */
+  body { padding-bottom: 4.5rem; }
   @keyframes pagina-entrar {
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: none; }
   }
 
   /* Barra da rotação automática: enche da esquerda para a direita e, ao
-     completar, a página troca (iniciarRotacao cuida do tempo). */
+     completar, a vista troca (agendarTroca cuida do tempo). */
   .rotacao-progresso {
     position: fixed;
     left: 0;
@@ -132,6 +132,7 @@ const CSS = `
     .paginacao,
     .paginacao__bolinha,
     .paginacao__bolinha--ativa,
+    .vista--ativa,
     body { animation: none; transition: none; }
   }
 
@@ -168,27 +169,76 @@ export function montarPaginacao() {
   estilo.textContent = CSS;
   document.head.appendChild(estilo);
 
-  const atual = location.pathname.split("/").pop() || "index.html";
-  if (OCULTAS_SEMPRE.includes(atual)) return;
+  // Só monta a barra no documento que tem as vistas (index.html); em páginas
+  // fora do SPA que importem este módulo não há o que navegar.
+  const existentes = PAGINAS.filter((p) => document.getElementById(p.vista));
+  if (existentes.length === 0) return;
 
   const visiveis = new Set(paginasVisiveis());
-  // A página atual sempre aparece, mesmo se desmarcada, para a barra não
-  // sumir debaixo de quem já está nela.
-  const paginas = PAGINAS.filter((p) => visiveis.has(p.arquivo) || p.arquivo === atual);
+  const porHash = existentes.find((p) => p.hash === location.hash);
+  // A vista aberta pela URL sempre aparece, mesmo se desmarcada na gestão,
+  // para a barra não sumir debaixo de quem já está nela.
+  const paginas = existentes.filter((p) => visiveis.has(p.arquivo) || p === porHash);
+  if (paginas.length === 0) paginas.push(existentes[0]);
 
   const nav = document.createElement("nav");
   nav.className = "paginacao";
   nav.setAttribute("aria-label", "Páginas do dashboard");
-  nav.innerHTML = paginas.map((pagina) => {
-    const ativa = pagina.arquivo === atual;
-    return `<a href="./${pagina.arquivo}"
-      class="paginacao__bolinha${ativa ? " paginacao__bolinha--ativa" : ""}"
-      title="${pagina.rotulo}" aria-label="${pagina.rotulo}"
-      ${ativa ? 'aria-current="page"' : ""}></a>`;
-  }).join("");
-
+  nav.innerHTML = paginas.map((pagina) =>
+    `<button type="button" class="paginacao__bolinha"
+      title="${pagina.rotulo}" aria-label="${pagina.rotulo}"></button>`
+  ).join("");
   document.body.appendChild(nav);
-  iniciarRotacao(paginas, atual);
+
+  const bolinhas = [...nav.querySelectorAll(".paginacao__bolinha")];
+  bolinhas.forEach((bolinha, i) => bolinha.addEventListener("click", () => ativar(paginas[i])));
+
+  const barra = document.createElement("div");
+  barra.className = "rotacao-progresso";
+  document.body.appendChild(barra);
+
+  let atual = null;
+  let timer = null;
+
+  function ativar(pagina) {
+    atual = pagina;
+    for (const p of existentes) {
+      document.getElementById(p.vista).classList.toggle("vista--ativa", p === pagina);
+    }
+    bolinhas.forEach((bolinha, i) => {
+      const ativa = paginas[i] === pagina;
+      bolinha.classList.toggle("paginacao__bolinha--ativa", ativa);
+      if (ativa) bolinha.setAttribute("aria-current", "page");
+      else bolinha.removeAttribute("aria-current");
+    });
+    // replaceState não navega (a barra do Silk não aparece), mas mantém a
+    // URL compartilhável e o reload voltando na mesma vista.
+    history.replaceState(null, "", pagina.hash);
+    // A vista recém-exibida precisa remedir (o grid do dashboard usa a janela).
+    window.dispatchEvent(new Event("resize"));
+    agendarTroca();
+  }
+
+  // Rotação automática: reinicia a barra e agenda a próxima vista.
+  function agendarTroca() {
+    clearTimeout(timer);
+    const segundos = segundosRotacao();
+
+    barra.style.transition = "none";
+    barra.style.width = "0";
+    if (!segundos || paginas.length < 2) return;
+
+    void barra.offsetWidth; // pinta o width 0 antes de animar de novo
+    barra.style.transition = `width ${segundos}s linear`;
+    barra.style.width = "100%";
+
+    timer = setTimeout(() => {
+      const i = paginas.indexOf(atual);
+      ativar(paginas[(i + 1) % paginas.length]);
+    }, segundos * 1000);
+  }
+
+  ativar(porHash && paginas.includes(porHash) ? porHash : paginas[0]);
   montarBotaoSair();
 }
 
@@ -204,23 +254,3 @@ function montarBotaoSair() {
   document.body.appendChild(botao);
 }
 
-function iniciarRotacao(paginas, atual) {
-  const segundos = segundosRotacao();
-  if (!segundos || paginas.length < 2) return;
-
-  const barra = document.createElement("div");
-  barra.className = "rotacao-progresso";
-  document.body.appendChild(barra);
-
-  const indice = paginas.findIndex((p) => p.arquivo === atual);
-  const proxima = paginas[(indice + 1) % paginas.length];
-
-  // Uma única transição CSS do tamanho do ciclo — sem timer por segundo.
-  // (dois rAF: o primeiro garante que o width 0 foi pintado antes de animar)
-  barra.style.transition = `width ${segundos}s linear`;
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => { barra.style.width = "100%"; })
-  );
-
-  setTimeout(() => { location.href = `./${proxima.arquivo}`; }, segundos * 1000);
-}

@@ -2,7 +2,6 @@
 // três colunas por status. Dados vêm de /api/helpdesk-chamados, que já traz
 // o nome de quem atende (ATRIBUIDO_A) e de quem resolveu (RESOLVIDO_POR).
 
-import { montarPaginacao } from "./paginacao.js";
 import { animarNumero } from "./animacoes.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
@@ -118,8 +117,6 @@ async function atualizar() {
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar os chamados do helpdesk.");
   }
 }
-
-montarPaginacao();
 
 atualizar();
 setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);

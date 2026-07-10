@@ -2,92 +2,10 @@
 <html lang="pt-br">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Vista incorporada ao index.html (SPA) — este arquivo só redireciona
+       para quem guardou a URL antiga. -->
+  <meta http-equiv="refresh" content="0; url=./index.html#ativos">
   <title>Ativos de TI</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <link rel="stylesheet" href="./tema.css">
-  <style>
-    /* Tema, toggle e botões vêm de tema.css. Aqui, só o CSS desta página. */
-
-    /* A página inteira cabe na janela (painel de TV): o corpo trava a
-       altura e os cards dividem o espaço que sobra — nada de rolagem. */
-    html, body { height: 100%; }
-    body { overflow: hidden; }
-    .pagina {
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .painel {
-      background: var(--surface);
-      border: 2px solid var(--border);
-      border-radius: 1.5rem;
-      padding: 1.25rem;
-    }
-
-    /* Cards de contagem por tipo: número grande colorido + rótulo
-       (mesmo padrão visual dos KPIs de Frotas). */
-    .kpi {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: .35rem;
-      text-align: center;
-      min-height: 0;
-      overflow: hidden;
-    }
-    .kpi__valor {
-      font-size: clamp(3rem, 7vw, 4.5rem);
-      font-weight: 800;
-      line-height: 1;
-      font-variant-numeric: tabular-nums;
-      color: var(--cor-kpi, var(--text));
-    }
-    .kpi__rotulo {
-      font-size: .85rem;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }
-
-    /* Os cards dividem a altura que sobra na janela (fileiras 1fr). */
-    .tipos-grid {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      grid-auto-rows: minmax(0, 1fr);
-      gap: 1.25rem;
-    }
-
-    /* Estado de aviso (banco não configurado / erro de consulta). */
-    .ativos-aviso {
-      margin-top: 1rem;
-      padding: .85rem 1rem;
-      border: 1px solid var(--border);
-      border-radius: .75rem;
-      background: var(--surface-2);
-      color: var(--text-dim);
-      font-size: .9rem;
-      display: none;
-    }
-    .ativos-aviso--visivel { display: block; }
-  </style>
 </head>
-<body class="min-h-screen">
-  <div class="pagina w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
-    <div class="flex items-center justify-between mb-3">
-      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Ativos de TI</h1>
-    </div>
-
-    <div id="ativos-aviso" class="ativos-aviso" role="alert"></div>
-
-    <!-- Cards por tipo de ativo (preenchidos pelo ativos-ti.js) -->
-    <div id="tipos-cards" class="tipos-grid mt-3"></div>
-  </div>
-
-  <script src="./ativos-ti.js" type="module"></script>
-</body>
+<body></body>
 </html>
