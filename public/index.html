@@ -326,6 +326,137 @@
     }
     .frota-aviso--visivel { display: block; }
 
+    /* ===== Vista Mapa da Frota ===== */
+    /* O palco ocupa o espaço que sobra; o SVG do mapa preenche por inteiro e
+       toda a animação (rotação + zoom) acontece dentro do próprio <g> do SVG,
+       via viewBox/transform, sem tocar no layout da página. */
+    .mapa-palco {
+      flex: 1;
+      min-height: 0;
+      margin-top: .75rem;
+      border-radius: 1.5rem;
+      background:
+        radial-gradient(120% 120% at 50% 0%, var(--surface-2) 0%, var(--surface) 70%);
+      border: 2px solid var(--border);
+      overflow: hidden;
+      position: relative;
+    }
+    .mapa-palco svg { width: 100%; height: 100%; display: block; }
+
+    /* Contorno dos países e do país destacado (Brasil). */
+    .mapa-pais {
+      fill: var(--surface-2);
+      stroke: var(--border);
+      stroke-width: .4;
+      vector-effect: non-scaling-stroke;
+    }
+    .mapa-pais--brasil {
+      fill: color-mix(in srgb, var(--success) 22%, var(--surface-2));
+      stroke: color-mix(in srgb, var(--success) 60%, var(--border));
+      stroke-width: .8;
+    }
+
+    /* Marcador de projeto: pino + halo pulsante. Fica DENTRO do <g> do mapa
+       (herda o transform e gruda na geografia); o raio é contra-escalado por JS
+       para não inflar com o zoom. O pulso escala só o halo, a partir do centro. */
+    .mapa-pino__halo {
+      fill: var(--success);
+      opacity: .28;
+      transform-origin: center;
+      transform-box: fill-box;
+      animation: mapa-pulso 2.6s ease-out infinite;
+    }
+    @keyframes mapa-pulso {
+      0%   { transform: scale(.5); opacity: .45; }
+      70%  { transform: scale(2.4); opacity: 0; }
+      100% { transform: scale(2.4); opacity: 0; }
+    }
+    .mapa-pino__ponto {
+      fill: var(--success);
+      stroke: var(--surface);
+    }
+
+    /* SVG overlay das linhas-guia (pino -> rótulo afastado no declutter). Fica
+       em espaço de TELA (px), por cima do mapa e por baixo dos rótulos. */
+    .mapa-linhas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }
+    .mapa-linha {
+      stroke: color-mix(in srgb, var(--success) 80%, var(--text));
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      opacity: .85;
+    }
+
+    /* Rótulo sempre visível (dashboard exposto, sem mouse): caixa com nome do
+       projeto, contagem de máquinas e as classes mais comuns. Fica em coordenada
+       de TELA (montado em HTML sobre o SVG), então nunca distorce com o zoom.
+       O JS posiciona o canto superior; translateX(-50%) centraliza no pino. */
+    .mapa-rotulos {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .mapa-rotulo {
+      position: absolute;
+      transform: translateX(-50%);
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      border: 1px solid var(--border);
+      border-radius: .6rem;
+      padding: .3rem .55rem;
+      min-width: 0;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
+      opacity: 0;
+      transition: opacity .4s ease;
+      white-space: nowrap;
+    }
+    .mapa-rotulo--visivel { opacity: 1; }
+    .mapa-rotulo__topo {
+      display: flex;
+      align-items: baseline;
+      gap: .4rem;
+    }
+    .mapa-rotulo__projeto {
+      font-weight: 800;
+      font-size: .82rem;
+      letter-spacing: .02em;
+    }
+    .mapa-rotulo__qtd {
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--success);
+      font-variant-numeric: tabular-nums;
+    }
+    .mapa-rotulo__classes {
+      font-size: .66rem;
+      color: var(--text-dim);
+      margin-top: .1rem;
+    }
+
+    .mapa-total { font-size: .9rem; font-weight: 600; color: var(--text-dim); }
+    .mapa-total strong { color: var(--success); font-variant-numeric: tabular-nums; }
+
+    .mapa-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .mapa-aviso--visivel { display: block; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .mapa-pino__halo { animation: none; }
+    }
+
     /* ===== Vista Ativos de TI: cards dividem a altura que sobra ===== */
     .ativos-grid {
       flex: 1;
@@ -542,6 +673,21 @@
     <div id="tipos-cards" class="tipos-grid"></div>
   </section>
 
+  <!-- ===== Vista Mapa da Frota (mapa-múndi anima até o Brasil) ===== -->
+  <section id="vista-mapa" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Mapa da Frota</h1>
+      <div id="mapa-total" class="mapa-total"></div>
+    </div>
+
+    <div id="mapa-aviso" class="mapa-aviso" role="alert"></div>
+
+    <!-- O SVG do globo/mapa é montado por frota-mapa.js: o mapa-múndi gira uma
+         volta, desacelera e dá zoom no Brasil, então revela os marcadores. -->
+    <div id="mapa-palco" class="mapa-palco" role="img"
+         aria-label="Mapa do Brasil com a localização atual da frota por projeto"></div>
+  </section>
+
   <!-- ===== Vista Ativos de TI (contagem por tipo) ===== -->
   <section id="vista-ativos" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
@@ -570,6 +716,7 @@
 
   <script src="./main.js" type="module"></script>
   <script src="./frotas.js" type="module"></script>
+  <script src="./frota-mapa.js" type="module"></script>
   <script src="./ativos-ti.js" type="module"></script>
   <script src="./helpdesk-chamados.js" type="module"></script>
 </body>

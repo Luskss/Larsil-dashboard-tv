@@ -47,6 +47,10 @@ export async function consultarFrota() {
   return pedir("/api/frota");
 }
 
+export async function consultarFrotaLocalizacao() {
+  return pedir("/api/frota-localizacao");
+}
+
 export async function consultarClima(cidade) {
   return pedir(`/api/clima?cidade=${encodeURIComponent(cidade)}`);
 }

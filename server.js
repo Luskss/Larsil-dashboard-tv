@@ -8,6 +8,7 @@
 //   GET  /api/clima?cidade=...   -> clima atual via Open-Meteo
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
+//   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
 
@@ -201,6 +202,80 @@ app.get("/api/frota", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar a frota:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco da frota" });
+  }
+});
+
+// ===== Localização da frota (SQL Server: dbo.TICKET x dbo.FROTA) =====
+// A posição "atual" de cada máquina é o ticket mais recente que tem
+// coordenada (LAT/LON), casado com dbo.FROTA pelo PREFIXO para trazer a
+// classe/espécie. Os pontos são agrupados por PROJETO (frente de trabalho),
+// já que várias máquinas compartilham a mesma frente/coordenada — isso deixa
+// o mapa legível numa TV. Cada grupo traz a contagem, as classes mais comuns
+// e a data da última posição.
+app.get("/api/frota-localizacao", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    const pool = await conectarSql();
+    // rn = 1 pega o ticket mais recente por prefixo (mais recente primeiro por
+    // DATA e, no empate do dia, por ID). Descarta prefixo vazio e coords nulas.
+    const { recordset } = await pool.request().query(
+      `SELECT t.PREFIXO AS prefixo, t.PROJETO AS projeto, t.DATA AS data,
+              t.LAT AS lat, t.LON AS lon,
+              COALESCE(NULLIF(LTRIM(RTRIM(f.CLASSE_ESPECIE)), ''),
+                       NULLIF(LTRIM(RTRIM(t.CLASSE)), ''), 'Sem classe') AS classe
+         FROM (
+           SELECT PREFIXO, PROJETO, DATA, LAT, LON, CLASSE,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
+                  ) AS rn
+             FROM dbo.TICKET
+            WHERE LAT IS NOT NULL AND LON IS NOT NULL
+              AND LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
+         ) t
+         LEFT JOIN dbo.FROTA f ON f.PREFIXO = t.PREFIXO
+        WHERE t.rn = 1`
+    );
+
+    // Agrupa por projeto: soma máquinas, guarda o centro (média das coords das
+    // frentes daquele projeto) e conta as classes para o rótulo.
+    const grupos = new Map();
+    for (const l of recordset) {
+      const projeto = String(l.projeto ?? "").trim() || "Sem projeto";
+      let g = grupos.get(projeto);
+      if (!g) {
+        g = { projeto, maquinas: 0, somaLat: 0, somaLon: 0, classes: new Map(), ultima: null };
+        grupos.set(projeto, g);
+      }
+      g.maquinas += 1;
+      g.somaLat += l.lat;
+      g.somaLon += l.lon;
+      g.classes.set(l.classe, (g.classes.get(l.classe) || 0) + 1);
+      if (!g.ultima || new Date(l.data) > new Date(g.ultima)) g.ultima = l.data;
+    }
+
+    const pontos = [...grupos.values()]
+      .map((g) => ({
+        projeto: g.projeto,
+        maquinas: g.maquinas,
+        lat: g.somaLat / g.maquinas,
+        lon: g.somaLon / g.maquinas,
+        ultima: g.ultima,
+        classes: [...g.classes]
+          .map(([nome, qtd]) => ({ nome, qtd }))
+          .sort((a, b) => b.qtd - a.qtd),
+      }))
+      .sort((a, b) => b.maquinas - a.maquinas);
+
+    res.json({
+      total: pontos.reduce((s, p) => s + p.maquinas, 0),
+      pontos,
+    });
+  } catch (erro) {
+    console.error("Erro ao consultar a localização da frota:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar a localização da frota" });
   }
 });
 
