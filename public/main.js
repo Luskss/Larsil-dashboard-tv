@@ -12,7 +12,7 @@ function iniciarRelogio() {
   function tick() {
     const agora = new Date();
     
-    // Força o JavaScript a formatar a hora no fuso de Brasília (America/Sao_Paulo)
+    // Força o JavaScript a formatar em Brasília
     const horaBrasilia = agora.toLocaleTimeString("pt-BR", {
       timeZone: "America/Sao_Paulo",
       hour: "2-digit",
@@ -23,8 +23,6 @@ function iniciarRelogio() {
 
     el.textContent = horaBrasilia;
   }
-
-  // Não esqueça de rodar a primeira vez e definir o intervalo!
   tick();
   setInterval(tick, 1000);
 }
