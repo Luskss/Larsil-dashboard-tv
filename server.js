@@ -56,7 +56,14 @@ app.post("/api/servicos", async (req, res) => {
 
 // ===== Config chave-valor =====
 app.get("/api/config/:chave", async (req, res) => {
-  res.json({ valor: await store.getConfig(req.params.chave) });
+  let valor = await store.getConfig(req.params.chave);
+  // Cidade do clima: se ninguém salvou pela tela de Gestão, vale a do
+  // ambiente (CIDADE_CLIMA) — útil no Railway, onde o data.json se perde
+  // a cada deploy sem um volume persistente.
+  if (!valor && req.params.chave === "cidade") {
+    valor = process.env.CIDADE_CLIMA || null;
+  }
+  res.json({ valor });
 });
 
 app.post("/api/config/:chave", async (req, res) => {
