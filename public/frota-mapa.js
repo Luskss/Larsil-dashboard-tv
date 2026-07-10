@@ -75,7 +75,11 @@ function arcoPor(arcos, indice) {
 }
 
 // Uma geometria (Polygon/MultiPolygon) -> lista de anéis em coordenadas geo.
+// Alguns países saem sem geometria (type: null, ex.: ilhas pequenas) em
+// versões mais leves do world-atlas — sem anéis, sem desenho, mas sem quebrar
+// o mapa inteiro.
 function aneisDaGeometria(geo, arcos) {
+  if (!geo.arcs) return [];
   const poligonos = geo.type === "MultiPolygon" ? geo.arcs : [geo.arcs];
   const aneis = [];
   for (const poligono of poligonos) {
@@ -95,29 +99,77 @@ function aneisDaGeometria(geo, arcos) {
   return aneis;
 }
 
+// Quebra um anel toda vez que dois pontos consecutivos saltam mais de 180° de
+// longitude — isso acontece em países que cruzam o antimeridiano (±180°), como
+// a Rússia (a Chukotka fica em -180 enquanto o resto está perto de +180). Sem
+// isso, a projeção plana ligaria os dois lados por uma reta que rasga o mapa na
+// horizontal. Retorna sub-anéis, cada um só de um lado do ±180°.
+function quebrarNoAntimeridiano(anel) {
+  const partes = [];
+  let atual = [];
+  for (let i = 0; i < anel.length; i++) {
+    if (i > 0 && Math.abs(anel[i][0] - anel[i - 1][0]) > 180) {
+      partes.push(atual);
+      atual = [];
+    }
+    atual.push(anel[i]);
+  }
+  if (atual.length) partes.push(atual);
+  return partes;
+}
+
 // Anéis geo -> atributo "d" de <path> na projeção equirretangular.
 function caminhoDoPais(aneis) {
   return aneis
-    .map((anel) =>
-      anel
+    .flatMap((anel) => quebrarNoAntimeridiano(anel))
+    .map((parte) =>
+      parte
         .map(([lon, lat], i) => `${i ? "L" : "M"}${projX(lon).toFixed(1)} ${projY(lat).toFixed(1)}`)
         .join("") + "Z"
     )
     .join("");
 }
 
+// Brasil em alta resolução (~1650 pontos no contorno principal, extraído do
+// world-atlas 50m) enquanto o resto do mundo usa o arquivo leve — o Brasil é
+// o único país em foco (zoom final e localização da frota), os demais só
+// aparecem desfocados durante o giro inicial.
+async function carregarBrasilDetalhado() {
+  const aneis = await (await fetch("./brasil-detalhado.json")).json();
+  return caminhoDoPais(aneis);
+}
+
 // ===== Montagem do SVG do mundo =====
 async function montarMapa() {
-  const topo = await (await fetch("./world-110m.json")).json();
+  const [topo, brasilDetalhado] = await Promise.all([
+    fetch("./world-110m.json").then((r) => r.json()),
+    carregarBrasilDetalhado().catch(() => null),
+  ]);
   const arcos = decodificarArcos(topo);
-  const paises = topo.objects.countries.geometries.map((geo) => ({
-    brasil: geo.id === "076" || /brazil|brasil/i.test(geo.properties?.name || ""),
-    d: caminhoDoPais(aneisDaGeometria(geo, arcos)),
-  }));
+  const paises = topo.objects.countries.geometries
+    .filter((geo) => !(brasilDetalhado && geo.id === "076"))
+    .map((geo) => ({
+      brasil: geo.id === "076" || /brazil|brasil/i.test(geo.properties?.name || ""),
+      d: caminhoDoPais(aneisDaGeometria(geo, arcos)),
+    }));
 
   const paths = paises
     .map((p) => `<path class="mapa-pais${p.brasil ? " mapa-pais--brasil" : ""}" d="${p.d}"></path>`)
     .join("");
+
+  // Costura Brasil ↔ vizinhos: o contorno detalhado do Brasil (50m) não bate com
+  // o dos vizinhos (110m), deixando uma fenda escura na fronteira. Em vez de
+  // engordar traço (borra a costura), desenhamos o Brasil detalhado DUAS vezes:
+  //   1) uma BASE com a cor dos vizinhos e um traço largo da mesma cor, que
+  //      "invade" o vão e o pinta com a cor de país (some a fenda escura);
+  //   2) o Brasil verde por cima, que define a silhueta e a borda limpas.
+  // A base fica logo antes do Brasil verde, então cobre o vão sem vazar por cima.
+  const brasilBase = brasilDetalhado
+    ? `<path class="mapa-costura" d="${brasilDetalhado}"></path>`
+    : "";
+  const brasilTopo = brasilDetalhado
+    ? `<path class="mapa-pais mapa-pais--brasil" d="${brasilDetalhado}"></path>`
+    : "";
 
   palco.innerHTML =
     // Duas cópias do mundo lado a lado (a 2ª deslocada +LARGURA): durante o
@@ -130,8 +182,8 @@ async function montarMapa() {
     // Só o raio é contra-escalado por quadro para o pino não inflar com o zoom.
     `<svg viewBox="0 0 ${LARGURA} ${ALTURA}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
        <g id="mapa-mundo">
-         <g>${paths}</g>
-         <g transform="translate(${LARGURA} 0)">${paths}</g>
+         <g>${paths}${brasilBase}${brasilTopo}</g>
+         <g transform="translate(${LARGURA} 0)">${paths}${brasilBase}${brasilTopo}</g>
          <g id="mapa-pinos"></g>
        </g>
      </svg>
@@ -210,7 +262,7 @@ function desenharPinos() {
   // Linha-guia (leader) do pino até o rótulo, quando o rótulo é afastado no
   // declutter. Espaço de TELA (SVG overlay separado, ver reposicionar).
   gLinhas.innerHTML = pontosAtuais.map((_, i) =>
-    `<line class="mapa-linha" data-i="${i}"></line>`
+    `<polyline class="mapa-linha" data-i="${i}"></polyline>`
   ).join("");
 
   rotulos.innerHTML = pontosAtuais.map((p, i) => {
@@ -262,19 +314,15 @@ function reposicionar(t) {
   // 2) Âncoras dos rótulos = posição de TELA de cada pino.
   const ancoras = pontosAtuais.map((p) => geoParaTela(p.lon, p.lat, t));
 
-  // 3) Declutter 2D: cada rótulo começa acima do seu pino e é afastado dos
-  // vizinhos que se sobrepõem (em qualquer direção), sem se distanciar demais
-  // da âncora. Depois liga o pino ao rótulo por uma linha até a borda mais
-  // próxima da caixa. cx/cy = centro da caixa; ax/ay = âncora (pino).
+  // 3) Layout em DUAS COLUNAS (esquerda/direita): cada card vai para a coluna
+  // do lado do seu pino e é empilhado por altura. A linha entra pela borda
+  // interna do card (o lado voltado para o centro). cx/cy = centro da caixa;
+  // ax/ay = âncora (pino); lado = -1 (esquerda) | +1 (direita).
   const caixas = pontosAtuais.map((p, i) => {
     const el = rotulos.querySelector(`[data-i="${i}"]`);
     const h = el ? el.offsetHeight || 40 : 40;
     const w = el ? el.offsetWidth || 150 : 150;
-    return {
-      i, w, h,
-      ax: ancoras[i].x, ay: ancoras[i].y,
-      cx: ancoras[i].x, cy: ancoras[i].y - 16 - h / 2, // repouso: acima do pino
-    };
+    return { i, w, h, ax: ancoras[i].x, ay: ancoras[i].y, cx: 0, cy: 0, lado: 0 };
   });
   espalharCaixas(caixas);
 
@@ -286,72 +334,155 @@ function reposicionar(t) {
     }
     const linha = gLinhas.querySelector(`[data-i="${c.i}"]`);
     if (linha) {
-      const [bx, by] = bordaMaisProxima(c);
-      linha.setAttribute("x1", c.ax.toFixed(1));
-      linha.setAttribute("y1", c.ay.toFixed(1));
-      linha.setAttribute("x2", bx.toFixed(1));
-      linha.setAttribute("y2", by.toFixed(1));
+      // Linha em cotovelo: borda interna do card -> calha (gutter) na altura do
+      // card -> calha na altura do pino -> pino. Como a parte vertical corre na
+      // calha, logo fora da coluna, a linha nunca cruza outro card.
+      const bx = c.cx - c.lado * (c.w / 2);   // borda interna do card (lado do mapa)
+      const g = c.gutterX;                     // calha da coluna
+      // Pontos: card -> calha(mesmo y do card) -> calha(y do pino) -> pino.
+      const pts = [
+        [bx, c.cy],
+        [g, c.cy],
+        [g, c.ay],
+        [c.ax, c.ay],
+      ];
+      linha.setAttribute("points", pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" "));
     }
   });
 }
 
-// Ponto na borda da caixa mais próximo do pino (para a linha "entrar" na caixa
-// pelo lado que faz sentido, não sempre por baixo).
-function bordaMaisProxima(c) {
-  const bx = Math.max(c.cx - c.w / 2, Math.min(c.ax, c.cx + c.w / 2));
-  const by = Math.max(c.cy - c.h / 2, Math.min(c.ay, c.cy + c.h / 2));
-  return [bx, by];
-}
-
-// Declutter 2D iterativo (force-based). Empurra pares que se sobrepõem pelo
-// eixo de menor penetração e puxa cada caixa de volta para perto da sua âncora.
-// Poucas caixas (~dezenas), então algumas iterações bastam.
+// Distribui os cards em duas colunas laterais (esquerda e direita), cada um do
+// lado do seu próprio pino, empilhados por ordem vertical do pino. Como a ordem
+// vertical dos cards numa coluna acompanha a dos pinos daquele lado, as linhas
+// não se cruzam. O empilhamento mantém cada card o MAIS PERTO possível da
+// altura real do seu pino (não joga tudo pro topo), então as linhas ficam
+// quase horizontais e curtas — sem subir em diagonal cortando outros cards.
 function espalharCaixas(caixas) {
   const W = palco.clientWidth || 1200, H = palco.clientHeight || 700;
-  const MARGEM = 6;        // folga entre caixas
-  const ITERS = 140;
+  if (!caixas.length) return;
 
-  // A atração começa mais forte (junta os rótulos perto dos pinos) e decai a
-  // cada iteração, deixando a separação "vencer" no fim — sem isso, o puxão
-  // reintroduz sobreposição a cada passo e sobram colisões.
-  const separar = () => {
-    for (let a = 0; a < caixas.length; a++) {
-      for (let b = a + 1; b < caixas.length; b++) {
-        const A = caixas[a], B = caixas[b];
-        let dx = B.cx - A.cx, dy = B.cy - A.cy;
-        const sobrepX = (A.w + B.w) / 2 + MARGEM - Math.abs(dx);
-        const sobrepY = (A.h + B.h) / 2 + MARGEM - Math.abs(dy);
-        if (sobrepX <= 0 || sobrepY <= 0) continue;
-        // Desempata caixas exatamente coincidentes com um empurrão mínimo.
-        if (dx === 0 && dy === 0) { dx = (a - b) || 1; }
-        if (sobrepX < sobrepY) {
-          const e = (sobrepX / 2 + 0.5) * (dx < 0 ? -1 : 1);
-          A.cx -= e; B.cx += e;
-        } else {
-          const e = (sobrepY / 2 + 0.5) * (dy < 0 ? -1 : 1);
-          A.cy -= e; B.cy += e;
-        }
-      }
+  const FOLGA_Y = 10;    // folga vertical entre cards empilhados
+  const FOLGA_X = 24;    // afastamento da coluna à região dos pinos daquele lado
+
+  // Divide os pinos entre esquerda e direita pela posição na tela; corta ao
+  // meio por X para as colunas ficarem equilibradas.
+  const porX = [...caixas].sort((a, b) => a.ax - b.ax);
+  const meio = Math.ceil(porX.length / 2);
+  const esquerda = porX.slice(0, meio);
+  const direita = porX.slice(meio);
+
+  const colocarColuna = (coluna, lado) => {
+    if (!coluna.length) return;
+    // Ordena por altura do pino: preserva a ordem vertical (linhas não cruzam).
+    coluna.sort((a, b) => a.ay - b.ay);
+    const larguraMax = coluna.reduce((m, c) => Math.max(m, c.w), 0);
+
+    // X da coluna: encostada do lado de fora da região de pinos daquele grupo,
+    // não na borda da tela — os cards ficam perto de onde a frota está.
+    let cx;
+    if (lado < 0) {
+      const pinoMaisEsq = Math.min(...coluna.map((c) => c.ax));
+      cx = Math.max(larguraMax / 2 + 8, pinoMaisEsq - FOLGA_X - larguraMax / 2);
+    } else {
+      const pinoMaisDir = Math.max(...coluna.map((c) => c.ax));
+      cx = Math.min(W - larguraMax / 2 - 8, pinoMaisDir + FOLGA_X + larguraMax / 2);
     }
+    // Calha (gutter): faixa vertical logo além da borda INTERNA dos cards (o
+    // lado voltado para o mapa), por onde as linhas sobem/descem sem cruzar
+    // nenhum card. A borda interna é a do card mais largo, para a calha nunca
+    // entrar em cima de card algum. lado -1 (esq): borda interna à direita;
+    // lado +1 (dir): borda interna à esquerda — daí o -lado.
+    const bordaInterna = cx - lado * (larguraMax / 2);
+    const gutterX = bordaInterna - lado * 12;
+    for (const c of coluna) { c.lado = lado; c.cx = cx; c.gutterX = gutterX; }
+
+    // Empilhamento que minimiza o deslocamento em relação ao Y ideal (o Y do
+    // pino): resolve sobreposições formando "grupos" que se movem juntos até a
+    // média das posições ideais, empurrando para cima OU para baixo conforme
+    // necessário — sem colar tudo no topo.
+    empilharCentrado(coluna, H, FOLGA_Y);
+
+    // Desempate de calhas SOBREPOSTAS (feito após o empilhamento, quando cy já
+    // está definido): quando os trechos verticais de vários cards ocupam a mesma
+    // faixa Y (pinos quase no mesmo ponto), eles virariam um traço grosso único.
+    // Afasta cada um por um degrau em X — preservando a ordem, então nenhuma
+    // linha cruza outra.
+    separarCalhas(coluna, lado);
   };
 
-  for (let iter = 0; iter < ITERS; iter++) {
-    const puxao = 0.08 * (1 - iter / ITERS); // decai de 0.08 -> 0
-    // Duas passadas de separação por iteração para dominar o puxão.
-    separar(); separar();
-    for (const c of caixas) {
-      const repousoY = c.ay - 16 - c.h / 2;
-      c.cx += (c.ax - c.cx) * puxao;
-      c.cy += (repousoY - c.cy) * puxao;
-      c.cx = Math.max(c.w / 2 + 4, Math.min(W - c.w / 2 - 4, c.cx));
-      c.cy = Math.max(c.h / 2 + 4, Math.min(H - c.h / 2 - 4, c.cy));
+  colocarColuna(esquerda, -1);
+  colocarColuna(direita, +1);
+}
+
+// Afasta em X as calhas cujos trechos verticais se sobrepõem na mesma faixa Y,
+// para não virarem um traço grosso quando vários pinos caem quase no mesmo
+// ponto. Aloca "faixas" (degraus de calha) como numa agenda: percorre os cards
+// já ordenados por ay e dá a cada um o menor degrau livre naquela faixa Y. Como
+// a ordem é preservada e o degrau só aumenta rumo ao mapa, as linhas não cruzam.
+function separarCalhas(coluna, lado) {
+  const PASSO = 9;   // distância entre calhas vizinhas (px)
+  const FOLGA = 4;   // tolerância de sobreposição em Y para considerar conflito
+  const trecho = (c) => [Math.min(c.cy, c.ay), Math.max(c.cy, c.ay)];
+
+  // Ordena por ay (destino do vertical) para alocação estável de degraus.
+  const ordem = [...coluna].sort((a, b) => a.ay - b.ay);
+  const ocupacao = []; // ocupacao[d] = maior Y já usado no degrau d
+
+  for (const c of ordem) {
+    const [y1, y2] = trecho(c);
+    let d = 0;
+    while (d < ocupacao.length && ocupacao[d] > y1 + FOLGA) d++;
+    ocupacao[d] = y2;
+    c.gutterX = c.gutterX - lado * (d * PASSO); // afasta rumo ao mapa
+  }
+}
+
+// Posiciona uma pilha de cards (já ordenados por ay) minimizando quanto cada um
+// se afasta do seu Y ideal (ay), sem sobreposição e dentro do palco. Algoritmo
+// de agrupamento: enquanto dois cards vizinhos se sobrepõem, funde-os num bloco
+// rígido cujo topo é a média das posições desejadas; repete até estabilizar.
+function empilharCentrado(coluna, H, folga) {
+  const alturaCard = (c) => c.h + folga;
+  // Cada card quer que seu TOPO fique em (ay - h/2). Guarda alvo do topo.
+  const grupos = coluna.map((c) => ({
+    itens: [c],
+    alturaTotal: alturaCard(c),
+    // soma dos alvos de topo "internos" ajustada para o topo do grupo
+    alvoTopo: c.ay - c.h / 2,
+  }));
+
+  let fundiu = true;
+  while (fundiu) {
+    fundiu = false;
+    for (let g = 0; g < grupos.length - 1; g++) {
+      const A = grupos[g], B = grupos[g + 1];
+      // Fim de A (se A começa em alvoTopo) vs início de B.
+      if (A.alvoTopo + A.alturaTotal > B.alvoTopo) {
+        // Funde: o novo alvo de topo é a média ponderada que minimiza o
+        // deslocamento total (posiciona o bloco no "centro de gravidade").
+        const novoAlvo =
+          (A.alvoTopo * A.itens.length + (B.alvoTopo - A.alturaTotal) * B.itens.length) /
+          (A.itens.length + B.itens.length);
+        A.itens = A.itens.concat(B.itens);
+        A.alturaTotal += B.alturaTotal;
+        A.alvoTopo = novoAlvo;
+        grupos.splice(g + 1, 1);
+        fundiu = true;
+        g = Math.max(-1, g - 2); // reavalia vizinhos afetados
+      }
     }
   }
-  // Passada final só de separação: garante zero sobreposição no resultado.
-  for (let k = 0; k < 20; k++) separar();
-  for (const c of caixas) {
-    c.cx = Math.max(c.w / 2 + 4, Math.min(W - c.w / 2 - 4, c.cx));
-    c.cy = Math.max(c.h / 2 + 4, Math.min(H - c.h / 2 - 4, c.cy));
+
+  // Escreve cy de cada card a partir do topo do seu grupo.
+  for (const grp of grupos) {
+    let topo = grp.alvoTopo;
+    // Prende o grupo inteiro dentro do palco.
+    topo = Math.max(8, Math.min(H - 8 - grp.alturaTotal, topo));
+    let y = topo;
+    for (const c of grp.itens) {
+      c.cy = y + c.h / 2;
+      y += alturaCard(c);
+    }
   }
 }
 
@@ -426,12 +557,17 @@ function animarAbertura() {
 function ocultarPinos() {
   palco.querySelectorAll(".mapa-pino").forEach((g) => (g.style.opacity = "0"));
   palco.querySelectorAll(".mapa-rotulo").forEach((el) => el.classList.remove("mapa-rotulo--visivel"));
+  // Esconde as linhas-guia durante o giro/zoom: até o mapa parar no Brasil,
+  // elas apontariam para pinos fora de quadro, cruzando o mundo inteiro.
+  const linhas = palco.querySelector("#mapa-linhas");
+  if (linhas) linhas.style.opacity = "0";
 }
 
-// Revela pinos e rótulos em cascata (ou de uma vez, se sem movimento).
+// Revela pinos, rótulos e linhas em cascata (ou de uma vez, se sem movimento).
 function revelarPinos(imediato) {
   const pinos = [...palco.querySelectorAll(".mapa-pino")];
   const rots = [...palco.querySelectorAll(".mapa-rotulo")];
+  const linhas = palco.querySelector("#mapa-linhas");
   pinos.forEach((g, i) => {
     const aplica = () => (g.style.opacity = "1");
     if (imediato) aplica();
@@ -442,6 +578,11 @@ function revelarPinos(imediato) {
     if (imediato) aplica();
     else setTimeout(aplica, 150 + (i / Math.max(rots.length, 1)) * T_REVELA);
   });
+  // As linhas só fazem sentido depois que os cards aparecem: revela junto.
+  if (linhas) {
+    if (imediato) linhas.style.opacity = "1";
+    else setTimeout(() => (linhas.style.opacity = "1"), 150);
+  }
 }
 
 // ===== Carga, aviso e ciclo =====

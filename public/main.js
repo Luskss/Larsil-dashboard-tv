@@ -95,8 +95,10 @@ function renderTiles() {
     );
     tilesEl.style.gridAutoRows = `${alturaCelula}px`;
 
-    // Quantas fileiras cabem no espaço útil (no mínimo as 7 do layout fixo).
-    const fileiras = Math.max(7, Math.floor((disponivel + gap) / (alturaCelula + gap)));
+    // O layout fixo tem exatamente 7 fileiras (relógio nas 2-4, clima nas
+    // 5-7). Fixamos aí para não sobrar uma fileira parcial de placeholders
+    // embaixo do clima.
+    const fileiras = 7;
 
     // Desconta as células já ocupadas pelos widgets reais (data-bloco).
     let ocupadas = 0;

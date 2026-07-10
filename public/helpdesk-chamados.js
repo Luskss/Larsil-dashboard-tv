@@ -4,7 +4,7 @@
 
 import { animarNumero } from "./animacoes.js";
 
-const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
+const INTERVALO_ATUALIZACAO_MS = 30 * 1000; // painel de TV: atualiza quase em tempo real
 
 // As três colunas do quadro, com a cor de destaque do tema.css e como cada
 // uma mostra a pessoa e o horário do chamado.
@@ -66,12 +66,12 @@ function mostrarAviso(mensagem) {
   aviso.classList.toggle("chamados-aviso--visivel", Boolean(mensagem));
 }
 
-function desenharCard(chamado, coluna, ordem) {
+function desenharCard(chamado, coluna, ordem, ehNovo) {
   const prioridade = String(chamado.prioridade || "").toUpperCase();
   const corPrioridade = COR_PRIORIDADE[prioridade] || "var(--text-dim)";
-  return `<div class="chamado anima-surgir" style="--ordem: ${ordem};">
+  return `<div class="chamado anima-surgir${ehNovo ? " chamado--novo" : ""}" style="--ordem: ${ordem};">
     <div class="chamado__topo">
-      <span>#${chamado.id} · ${formatarHorario(coluna.horario(chamado))}</span>
+      <span>#${chamado.id} · ${formatarHorario(coluna.horario(chamado))}${ehNovo ? '<span class="chamado__novo-selo">NOVO</span>' : ""}</span>
       ${prioridade ? `<span class="chamado__prioridade" style="--cor-prioridade: ${corPrioridade};">${escapar(prioridade)}</span>` : ""}
     </div>
     <div class="chamado__titulo">${escapar(chamado.titulo || "(sem título)")}</div>
@@ -79,7 +79,7 @@ function desenharCard(chamado, coluna, ordem) {
   </div>`;
 }
 
-function desenharColunas(dados) {
+function desenharColunas(dados, idsNovos) {
   const alvo = document.querySelector("#colunas");
   alvo.innerHTML = COLUNAS.map((coluna, i) => {
     const chamados = dados.colunas?.[coluna.chave] || [];
@@ -91,7 +91,7 @@ function desenharColunas(dados) {
       </div>
       <div class="coluna__cards">
         ${chamados.length
-          ? chamados.map((c, j) => desenharCard(c, coluna, j)).join("")
+          ? chamados.map((c, j) => desenharCard(c, coluna, j, idsNovos.has(c.id))).join("")
           : `<div class="coluna__vazia">Nenhum chamado</div>`}
       </div>
     </div>`;
@@ -105,14 +105,70 @@ function desenharColunas(dados) {
   });
 }
 
+// IDs de chamados já vistos na coluna "Abertos". Na primeira carga a página
+// só registra o que já existe (sem notificar); depois, todo ID que aparecer e
+// não estava aqui conta como chamado novo.
+let idsVistos = null;
+
+// Aponta os IDs "Abertos" da resposta que ainda não tínhamos visto.
+function detectarNovos(dados) {
+  const abertos = (dados.colunas?.ABERTO || []).map((c) => c.id);
+  const novos = new Set();
+  if (idsVistos === null) {
+    // Primeira carga: memoriza sem alardear.
+    idsVistos = new Set(abertos);
+    return novos;
+  }
+  for (const id of abertos) {
+    if (!idsVistos.has(id)) novos.add(id);
+  }
+  idsVistos = new Set(abertos);
+  return novos;
+}
+
+let toastTimer = null;
+function mostrarToast(qtd) {
+  const toast = document.querySelector("#toast-novos");
+  const texto = document.querySelector("#toast-novos-texto");
+  texto.textContent = qtd === 1 ? "1 novo chamado aberto" : `${qtd} novos chamados abertos`;
+  toast.classList.add("toast-novos--visivel");
+  tocarSino();
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("toast-novos--visivel"), 6000);
+}
+
+// Bipe curto via Web Audio — sem depender de arquivo de áudio. Alguns
+// navegadores só liberam som após uma interação; nesse caso falha em silêncio.
+let audioCtx = null;
+function tocarSino() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const ganho = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+    osc.frequency.setValueAtTime(1175, audioCtx.currentTime + 0.12);
+    ganho.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    ganho.gain.exponentialRampToValueAtTime(0.15, audioCtx.currentTime + 0.02);
+    ganho.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+    osc.connect(ganho).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.4);
+  } catch {
+    /* som indisponível — segue sem bipe */
+  }
+}
+
 async function atualizar() {
   try {
     const resp = await fetch("/api/helpdesk-chamados");
     const dados = await resp.json();
     if (!resp.ok) throw dados.erro || "Erro ao carregar os chamados do helpdesk.";
 
+    const idsNovos = detectarNovos(dados);
     mostrarAviso("");
-    desenharColunas(dados);
+    desenharColunas(dados, idsNovos);
+    if (idsNovos.size > 0) mostrarToast(idsNovos.size);
   } catch (erro) {
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar os chamados do helpdesk.");
   }
