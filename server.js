@@ -469,9 +469,8 @@ async function servicosDoToken({ rotulo, token }) {
       node.domains?.serviceDomains?.[0]?.domain ||
       "";
     return {
-      // "nome" identifica na lista (com o rótulo do projeto quando há vários
-      // serviços); "servico" é o nome puro, usado na pill de cron.
-      nome: varios ? `${rotulo} · ${node.serviceName}` : rotulo,
+      // "nome" identifica na lista; "servico" é o nome puro, usado na pill de cron.
+      nome: varios ? node.serviceName : rotulo,
       servico: node.serviceName,
       endereco: dominio ? `https://${dominio}` : "",
       online: node.latestDeployment?.status === "SUCCESS",
