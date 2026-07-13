@@ -87,14 +87,30 @@
     .bloco--h2   { grid-row: span 2; }
     .bloco--w2h2 { grid-column: span 2; grid-row: span 2; }
     .bloco--w3h2 { grid-column: span 3; grid-row: span 2; }
+    .bloco--w3h3 { grid-column: span 3; grid-row: span 3; }
     .bloco--w3h4 { grid-column: span 3; grid-row: span 4; }
     .bloco--w4h4 { grid-column: span 4; grid-row: span 4; }
+
+    /* Bloco da logo: quadrado que centraliza a imagem, que respeita a caixa
+       sem vazar (contain). */
+    .bloco--logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+    }
+    .bloco--logo img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
 
     /* Posições fixas (o dense flow sozinho encostaria o clima ao lado do
        relógio; aqui pregamos cada um na sua célula). Relógio 5x3 no topo,
        clima logo abaixo. */
-    .pos--relogio { grid-column: 1 / span 5; grid-row: 2 / span 3; }
-    .pos--clima   { grid-column: 1 / span 8; grid-row: 5 / span 3; }
+    .pos--logo    { grid-column: 1 / span 3; grid-row: 1 / span 3; }
+    .pos--relogio { grid-column: 4 / span 5; grid-row: 1 / span 3; }
+    .pos--clima   { grid-column: 1 / span 8; grid-row: 4 / span 3; }
 
     /* Widget real no estilo "pílula" do mockup (relógio + clima).
        container-type permite dimensionar o conteúdo pela largura do PRÓPRIO
@@ -917,8 +933,13 @@
         <div id="saudacao" class="saudacao">&nbsp;</div>
       </div>
 
+      <!-- Logo: quadrado 3x3 à direita do relógio. -->
+      <div class="tile bloco--logo pos--logo anima-surgir" data-bloco="9" style="--ordem: 1;">
+        <img src="/img/branca.png" alt="Logo">
+      </div>
+
       <!-- Clima: 7x3 células abaixo do relógio — agora + previsão da semana. -->
-      <div class="widget clima-widget pos--clima anima-surgir" data-bloco="24" style="--ordem: 1;">
+      <div class="widget clima-widget pos--clima anima-surgir" data-bloco="24" style="--ordem: 2;">
         <div class="clima-atual">
           <div id="clima-temp" class="clima-atual__temp">--°</div>
           <div>

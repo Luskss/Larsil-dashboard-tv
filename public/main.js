@@ -86,19 +86,16 @@ function renderTiles() {
       (parseFloat(getComputedStyle(tilesEl.parentElement).paddingBottom) || 0);
     const disponivel = window.innerHeight - topo - reserva;
 
-    // Célula quadrada (altura = largura da coluna), mas achatada quando as
-    // 7 fileiras do layout fixo (relógio nas 2-4, clima nas 5-7) não cabem
-    // — melhor blocos mais baixos do que a página rolar.
-    const alturaCelula = Math.max(
-      40,
-      Math.min(larguraCelula, (disponivel - 6 * gap) / 7)
-    );
+    // Célula sempre quadrada: a altura da fileira é a largura da coluna.
+    const alturaCelula = Math.max(40, larguraCelula);
     tilesEl.style.gridAutoRows = `${alturaCelula}px`;
 
-    // O layout fixo tem exatamente 7 fileiras (relógio nas 2-4, clima nas
-    // 5-7). Fixamos aí para não sobrar uma fileira parcial de placeholders
-    // embaixo do clima.
-    const fileiras = 7;
+    // Quantas fileiras quadradas cabem na altura disponível. O layout fixo
+    // ocupa as fileiras 1-6 (relógio 1-3, clima 4-6), então garantimos no
+    // mínimo 6 para não cortar o clima; acima disso preenchemos o que sobrar
+    // com fileiras de placeholders.
+    const cabem = Math.floor((disponivel + gap) / (alturaCelula + gap));
+    const fileiras = Math.max(6, cabem);
 
     // Desconta as células já ocupadas pelos widgets reais (data-bloco).
     let ocupadas = 0;
