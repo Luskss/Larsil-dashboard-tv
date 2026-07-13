@@ -1,7 +1,7 @@
 // Persistência simples em arquivo JSON.
 //
-// Guarda { servicos: [...], config: { chave: valor } } em DATA_FILE.
-// No Railway, aponte DATA_DIR para um volume persistente (ex.: /data),
+// Guarda { servicos: [...], config: { chave: valor }, railway: [...] } em
+// DATA_FILE. No Railway, aponte DATA_DIR para um volume persistente (ex.: /data),
 // senão o arquivo é recriado a cada deploy. Localmente, cai em ./data.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), "data");
 const DATA_FILE = join(DATA_DIR, "data.json");
 
-const PADRAO = { servicos: [], config: {} };
+const PADRAO = { servicos: [], config: {}, railway: [] };
 
 async function ler() {
   try {
@@ -48,5 +48,19 @@ export async function getConfig(chave) {
 export async function setConfig(chave, valor) {
   const dados = await ler();
   dados.config[chave] = valor;
+  await escrever(dados);
+}
+
+// ===== Tokens do Railway =====
+// Cada item é { id, rotulo, token } — um serviço/projeto monitorado.
+// O id serve para editar/remover uma linha específica pela UI sem depender
+// do rótulo (que pode repetir ou ser renomeado).
+export async function listarRailway() {
+  return (await ler()).railway;
+}
+
+export async function salvarRailway(itens) {
+  const dados = await ler();
+  dados.railway = Array.isArray(itens) ? itens : [];
   await escrever(dados);
 }

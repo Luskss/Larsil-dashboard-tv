@@ -9,6 +9,7 @@
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
+//   GET  /api/frota-lideres      -> qtd de veículos por coordenador (dbo.TICKET)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
@@ -16,6 +17,7 @@
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import sql from "mssql";
 import * as store from "./store.js";
 import { validarLogin, iniciarSessao, encerrarSessao, exigirSessao } from "./auth.js";
@@ -299,6 +301,66 @@ app.get("/api/frota-localizacao", async (_req, res) => {
   }
 });
 
+// ===== Frota por líder/coordenador (SQL Server: dbo.TICKET x dbo.FROTA) =====
+// Cada veículo (PREFIXO) é contado uma vez, sob o coordenador do seu
+// ticket mais recente — mesmo critério de "atual" usado em /api/frota-localizacao.
+// O tipo/classe do veículo vem de dbo.FROTA, casado pelo PREFIXO.
+app.get("/api/frota-lideres", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
+    const pool = await conectarSql();
+    const { recordset } = await pool.request().query(
+      `SELECT COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), 'Sem coordenador') AS coordenador,
+              t.PREFIXO AS prefixo,
+              COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo') AS tipo
+         FROM (
+           SELECT PREFIXO, COORDENADOR,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
+                  ) AS rn
+             FROM dbo.TICKET
+            WHERE LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
+         ) t
+         LEFT JOIN dbo.FROTA f ON f.PREFIXO = t.PREFIXO
+        WHERE t.rn = 1`
+    );
+
+    const grupos = new Map();
+    for (const l of recordset) {
+      const nome = String(l.coordenador ?? "").trim() || "Sem coordenador";
+      let g = grupos.get(nome);
+      if (!g) {
+        g = { nome, qtd: 0, tipos: new Map() };
+        grupos.set(nome, g);
+      }
+      g.qtd += 1;
+      g.tipos.set(l.tipo, (g.tipos.get(l.tipo) || 0) + 1);
+    }
+
+    const lideres = [...grupos.values()]
+      .map((g) => ({
+        nome: g.nome,
+        qtd: g.qtd,
+        tipos: [...g.tipos]
+          .map(([nome, qtd]) => ({ nome, qtd }))
+          .sort((a, b) => b.qtd - a.qtd),
+      }))
+      .sort((a, b) => b.qtd - a.qtd);
+
+    res.json({
+      total: lideres.reduce((s, l) => s + l.qtd, 0),
+      lideres,
+    });
+  } catch (erro) {
+    console.error("Erro ao consultar a frota por líder:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar a frota por líder" });
+  }
+});
+
 // ===== Ativos de TI (SQL Server) =====
 // Contagem por tipo em inventario.ATIVOS. A tela lista só os tipos abaixo
 // (pedido do Lucas); outros tipos que existam na tabela ficam fora por ora.
@@ -401,7 +463,10 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
 // A API exige o header Project-Access-Token (não Authorization: Bearer).
 const RAILWAY_API_URL = "https://backboard.railway.app/graphql/v2";
 
-function listaTokensRailway() {
+// Fonte principal dos tokens: o data.json (gerenciado pela tela de Gestão).
+// O .env RAILWAY_SERVICOS ("Rótulo=TOKEN,..." em uma linha) fica como fallback
+// para não quebrar instalações que ainda o usam — só vale se nada foi salvo.
+function tokensDoEnv() {
   const bruto = process.env.RAILWAY_SERVICOS || "";
   return bruto
     .split(",")
@@ -415,7 +480,27 @@ function listaTokensRailway() {
     .filter(Boolean);
 }
 
+async function listaTokensRailway() {
+  const salvos = await store.listarRailway();
+  if (salvos.length > 0) {
+    return salvos
+      .map((s) => ({ rotulo: (s.rotulo || "").trim(), token: (s.token || "").trim() }))
+      .filter((s) => s.token);
+  }
+  return tokensDoEnv();
+}
+
+// Marca no erro se a causa é o token (inválido/sem permissão), para a UI
+// distinguir "problema de preenchimento" de "serviço fora do ar".
+function erroToken(mensagem) {
+  const erro = new Error(mensagem);
+  erro.tipoToken = true;
+  return erro;
+}
+
 async function consultaRailway(token, query, variables) {
+  if (!token) throw erroToken("Token não preenchido");
+
   const resp = await fetch(RAILWAY_API_URL, {
     method: "POST",
     headers: {
@@ -425,7 +510,16 @@ async function consultaRailway(token, query, variables) {
     body: JSON.stringify({ query, variables }),
   });
   const dados = await resp.json();
-  if (!resp.ok || dados.errors) throw new Error(dados.errors?.[0]?.message || "Erro na API do Railway");
+  if (!resp.ok || dados.errors) {
+    const mensagem = dados.errors?.[0]?.message || "Erro na API do Railway";
+    // 401/403 ou mensagens de auth do Railway = token errado, não serviço fora.
+    // Obs.: token inválido volta como HTTP 200 + "Project Token not found"
+    // (testado contra a API real), por isso "token not found" entra aqui.
+    const ehAuth =
+      resp.status === 401 || resp.status === 403 ||
+      /not authorized|unauthorized|forbidden|invalid.*token|token.*(invalid|not found)/i.test(mensagem);
+    throw ehAuth ? erroToken(mensagem) : new Error(mensagem);
+  }
   return dados.data;
 }
 
@@ -468,12 +562,16 @@ async function servicosDoToken({ rotulo, token }) {
       node.domains?.customDomains?.[0]?.domain ||
       node.domains?.serviceDomains?.[0]?.domain ||
       "";
+    const online = node.latestDeployment?.status === "SUCCESS";
     return {
       // "nome" identifica na lista; "servico" é o nome puro, usado na pill de cron.
       nome: varios ? node.serviceName : rotulo,
       servico: node.serviceName,
       endereco: dominio ? `https://${dominio}` : "",
-      online: node.latestDeployment?.status === "SUCCESS",
+      online,
+      // estado: "online" (ok), "erro" (deploy falhou/fora do ar) ou "token"
+      // (problema de autenticação — tratado no catch da rota).
+      estado: online ? "online" : "erro",
       cron: node.cronSchedule || null,
       proximaExecucao: node.nextCronRunAt || null,
     };
@@ -481,19 +579,68 @@ async function servicosDoToken({ rotulo, token }) {
 }
 
 app.get("/api/railway-status", async (_req, res) => {
-  const tokens = listaTokensRailway();
+  const tokens = await listaTokensRailway();
   if (tokens.length === 0) {
-    return res.status(503).json({ erro: "Nenhum serviço configurado — preencha RAILWAY_SERVICOS no .env" });
+    return res.status(503).json({ erro: "Nenhum serviço configurado — adicione tokens na tela de Gestão" });
   }
   const resultado = await Promise.all(
     tokens.map((t) =>
       servicosDoToken(t).catch((erro) => {
         console.error(`Erro ao consultar Railway (${t.rotulo}):`, erro.message);
-        return [{ nome: t.rotulo, endereco: "", online: false }];
+        // erro.tipoToken => token inválido/não preenchido (problema de config,
+        // não do serviço); a UI mostra esse estado com cor/rótulo próprios.
+        const estado = erro.tipoToken ? "token" : "erro";
+        return [{ nome: t.rotulo, endereco: "", online: false, estado }];
       })
     )
   );
   res.json({ servicos: resultado.flat() });
+});
+
+// ===== Gerenciamento dos tokens do Railway (tela de Gestão) =====
+// GET devolve os tokens MASCARADOS (só os 4 últimos dígitos): a UI nunca
+// recebe o segredo completo. Cada item traz "temToken" para a tela saber
+// se já existe um valor salvo. O POST recebe a lista inteira; quando o
+// usuário não digita um token novo numa linha, manda "token: null" e o
+// servidor preserva o valor que já estava salvo naquele id.
+function mascarar(token) {
+  if (!token) return "";
+  const fim = token.slice(-4);
+  return `••••${fim}`;
+}
+
+app.get("/api/railway-tokens", async (_req, res) => {
+  const itens = await store.listarRailway();
+  res.json({
+    tokens: itens.map((i) => ({
+      id: i.id,
+      rotulo: i.rotulo,
+      tokenMascarado: mascarar(i.token),
+      temToken: Boolean(i.token),
+    })),
+    // Sinaliza para a UI se ainda há tokens só no .env (migração pendente).
+    usandoEnv: itens.length === 0 && tokensDoEnv().length > 0,
+  });
+});
+
+app.post("/api/railway-tokens", async (req, res) => {
+  const recebidos = Array.isArray(req.body?.tokens) ? req.body.tokens : [];
+  const atuais = new Map((await store.listarRailway()).map((i) => [i.id, i]));
+
+  const itens = [];
+  for (const bruto of recebidos) {
+    const rotulo = String(bruto?.rotulo ?? "").trim();
+    const id = String(bruto?.id ?? "").trim() || randomUUID();
+    // token === null/undefined => manter o já salvo; string => substituir.
+    const tokenNovo = bruto?.token == null ? null : String(bruto.token).trim();
+    const token = tokenNovo !== null ? tokenNovo : (atuais.get(id)?.token ?? "");
+    // Descarta linhas sem rótulo e sem token (linha vazia deixada pela UI).
+    if (!rotulo && !token) continue;
+    itens.push({ id, rotulo, token });
+  }
+
+  await store.salvarRailway(itens);
+  res.json({ ok: true });
 });
 
 // ===== Downdetector =====

@@ -75,6 +75,54 @@
       margin-top: .5rem;
       min-height: 1.2em;
     }
+
+    /* Tokens do Railway */
+    .lista-tokens { display: flex; flex-direction: column; gap: .5rem; }
+    .linha-token {
+      display: flex;
+      gap: .5rem;
+      align-items: center;
+    }
+    .linha-token input {
+      padding: .55rem .8rem;
+      border-radius: .6rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: .95rem;
+    }
+    .linha-token input.token-rotulo { flex: 0 0 14rem; }
+    .linha-token input.token-valor {
+      flex: 1;
+      font-family: ui-monospace, monospace;
+    }
+    .linha-token .btn-remover {
+      flex: 0 0 auto;
+      padding: .5rem .7rem;
+      border-radius: .6rem;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-dim);
+      cursor: pointer;
+      line-height: 1;
+    }
+    .linha-token .btn-remover:hover { color: var(--danger, #ef4444); }
+    .acoes-tokens { display: flex; gap: .5rem; margin-top: .75rem; align-items: center; }
+    .acoes-tokens button {
+      padding: .55rem 1.1rem;
+      border-radius: .6rem;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .acoes-tokens button:hover { background: var(--surface); }
+    .tokens-status {
+      font-size: .85rem;
+      color: var(--text-dim);
+      min-height: 1.2em;
+    }
   </style>
 </head>
 <body class="min-h-screen">
@@ -95,6 +143,21 @@
       <div id="cidade-status" class="cidade-status"></div>
     </div>
 
+    <div class="card-cfg rounded p-4 mb-6">
+      <h2 class="font-bold mb-1">Serviços do Railway</h2>
+      <p class="text-sm mb-4" style="color: var(--text-dim);">
+        Cada linha é um Project Token do Railway (Project Settings → Tokens). O rótulo aparece
+        no card de status. Tokens já salvos ficam mascarados — deixe o campo em branco para manter
+        o valor atual, ou digite um novo para substituir.
+      </p>
+      <div id="lista-tokens" class="lista-tokens"></div>
+      <div class="acoes-tokens">
+        <button type="button" id="btn-add-token">+ Adicionar serviço</button>
+        <button type="button" id="btn-salvar-tokens">Salvar</button>
+        <span id="tokens-status" class="tokens-status"></span>
+      </div>
+    </div>
+
     <div class="card-cfg rounded p-4">
       <h2 class="font-bold mb-1">Páginas visíveis na navegação</h2>
       <p class="text-sm mb-4" style="color: var(--text-dim);">
@@ -107,7 +170,7 @@
 
   <script type="module">
     import { PAGINAS, paginasVisiveis, salvarPaginasVisiveis, paginasOrdenadas, salvarPaginasOrdem } from "./paginacao.js";
-    import { getConfig, setConfig } from "./downdetector.js";
+    import { getConfig, setConfig, listarRailwayTokens, salvarRailwayTokens } from "./downdetector.js";
 
     // Sem montarPaginacao(): esta página fica sempre fora da navegação/transição
     // (paginacao.js trata gestao.html como oculta por padrão).
@@ -128,6 +191,98 @@
         statusCidade.textContent = "Cidade salva.";
       } catch {
         statusCidade.textContent = "Erro ao salvar a cidade.";
+      }
+    });
+
+    // ===== Serviços do Railway =====
+    // Cada linha guarda { id, rotulo, tokenMascarado, temToken }. O campo de
+    // token começa vazio (placeholder mostra o mascarado); só é enviado quando
+    // o usuário digita algo. token: null => manter o já salvo no servidor.
+    const listaTokens = document.querySelector("#lista-tokens");
+    const statusTokens = document.querySelector("#tokens-status");
+    let tokens = [];
+
+    function novoId() {
+      return (crypto.randomUUID?.() || String(Date.now() + Math.random()));
+    }
+
+    function renderizarTokens() {
+      listaTokens.innerHTML = tokens.map((t) => `
+        <div class="linha-token" data-id="${t.id}">
+          <input class="token-rotulo" type="text" placeholder="Rótulo (ex.: Dashboard TI)"
+                 value="${(t.rotulo || "").replace(/"/g, "&quot;")}">
+          <input class="token-valor" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="${t.temToken ? "Salvo: " + t.tokenMascarado + " (deixe em branco p/ manter)" : "Cole o Project Token"}">
+          <button type="button" class="btn-remover" title="Remover">✕</button>
+        </div>
+      `).join("");
+    }
+
+    listarRailwayTokens().then(({ tokens: salvos, usandoEnv }) => {
+      tokens = (salvos || []).map((t) => ({ ...t }));
+      if (tokens.length === 0) tokens.push({ id: novoId(), rotulo: "", temToken: false });
+      renderizarTokens();
+      if (usandoEnv) {
+        statusTokens.textContent = "Tokens ainda vêm do .env — salve aqui para migrar.";
+      }
+    }).catch(() => {
+      statusTokens.textContent = "Erro ao carregar os serviços.";
+    });
+
+    document.querySelector("#btn-add-token").addEventListener("click", () => {
+      // Persiste os valores já digitados antes de re-renderizar.
+      lerLinhasParaTokens();
+      tokens.push({ id: novoId(), rotulo: "", temToken: false });
+      renderizarTokens();
+    });
+
+    listaTokens.addEventListener("click", (ev) => {
+      const botao = ev.target.closest(".btn-remover");
+      if (!botao) return;
+      const id = botao.closest(".linha-token").dataset.id;
+      lerLinhasParaTokens();
+      tokens = tokens.filter((t) => t.id !== id);
+      if (tokens.length === 0) tokens.push({ id: novoId(), rotulo: "", temToken: false });
+      renderizarTokens();
+    });
+
+    // Lê o DOM de volta para o array (rótulo sempre; token só se digitado).
+    function lerLinhasParaTokens() {
+      const linhas = listaTokens.querySelectorAll(".linha-token");
+      const porId = new Map(tokens.map((t) => [t.id, t]));
+      tokens = [...linhas].map((linha) => {
+        const id = linha.dataset.id;
+        const anterior = porId.get(id) || { id };
+        const rotulo = linha.querySelector(".token-rotulo").value.trim();
+        const digitado = linha.querySelector(".token-valor").value;
+        return {
+          ...anterior,
+          id,
+          rotulo,
+          // "" => não mexeu; guardamos só no envio (token: null quando vazio).
+          _tokenDigitado: digitado,
+        };
+      });
+    }
+
+    document.querySelector("#btn-salvar-tokens").addEventListener("click", async () => {
+      lerLinhasParaTokens();
+      statusTokens.textContent = "Salvando...";
+      try {
+        const payload = tokens.map((t) => ({
+          id: t.id,
+          rotulo: t.rotulo,
+          token: t._tokenDigitado ? t._tokenDigitado : null,
+        }));
+        await salvarRailwayTokens(payload);
+        // Recarrega para refletir o estado salvo (máscaras atualizadas).
+        const { tokens: salvos } = await listarRailwayTokens();
+        tokens = (salvos || []).map((t) => ({ ...t }));
+        if (tokens.length === 0) tokens.push({ id: novoId(), rotulo: "", temToken: false });
+        renderizarTokens();
+        statusTokens.textContent = "Serviços salvos.";
+      } catch {
+        statusTokens.textContent = "Erro ao salvar os serviços.";
       }
     });
 

@@ -31,6 +31,7 @@ function segundosRotacao() {
 export const PAGINAS = [
   { rotulo: "Dashboard",    arquivo: "index.html",               vista: "vista-dashboard", hash: "#dashboard" },
   { rotulo: "Frotas",       arquivo: "frotas-estatisticas.html", vista: "vista-frotas",    hash: "#frotas" },
+  { rotulo: "Frota por Líder", arquivo: "frota-lideres.html",    vista: "vista-lideres",   hash: "#lideres" },
   { rotulo: "Mapa da Frota",arquivo: "frota-mapa.html",          vista: "vista-mapa",      hash: "#mapa" },
   { rotulo: "Ativos de TI", arquivo: "ativos-ti.html",           vista: "vista-ativos",    hash: "#ativos" },
   { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },

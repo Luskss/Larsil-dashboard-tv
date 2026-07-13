@@ -38,6 +38,18 @@ export async function setConfig(chave, valor) {
   });
 }
 
+export async function listarRailwayTokens() {
+  return pedir("/api/railway-tokens");
+}
+
+export async function salvarRailwayTokens(tokens) {
+  return pedir("/api/railway-tokens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokens }),
+  });
+}
+
 export async function consultarStatus(slug) {
   const { status } = await pedir(`/api/status/${encodeURIComponent(slug)}`);
   return status;
@@ -49,6 +61,10 @@ export async function consultarFrota() {
 
 export async function consultarFrotaLocalizacao() {
   return pedir("/api/frota-localizacao");
+}
+
+export async function consultarFrotaLideres() {
+  return pedir("/api/frota-lideres");
 }
 
 export async function consultarClima(cidade) {

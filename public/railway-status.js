@@ -19,15 +19,25 @@ function proximaExecucaoTexto(c) {
   return `próxima ${FORMATO_DATA.format(new Date(c.proximaExecucao))}`;
 }
 
+// estado: "online" | "erro" (serviço fora do ar) | "token" (token inválido/
+// não preenchido). Cada um tem cor e rótulo próprios para não confundir
+// problema de configuração com serviço fora do ar.
+const ROTULO_ESTADO = { online: "Online", erro: "Erro", token: "Token" };
+
+function estadoDe(s) {
+  return s.estado || (s.online ? "online" : "erro");
+}
+
 function linhaServico(s, i) {
+  const estado = estadoDe(s);
   return `
-    <div class="servico-linha servico-linha--${s.online ? "online" : "erro"} anima-surgir" style="--ordem: ${i};">
+    <div class="servico-linha servico-linha--${estado} anima-surgir" style="--ordem: ${i};">
       <span class="servico-linha__bolinha"></span>
       <div class="servico-linha__info">
         <div class="servico-linha__nome">${s.nome}</div>
-        <div class="servico-linha__endereco">${s.endereco || "—"}</div>
+        <div class="servico-linha__endereco">${estado === "token" ? "Verifique o token na tela de Gestão" : (s.endereco || "—")}</div>
       </div>
-      <div class="servico-linha__status">${s.online ? "Online" : "Erro"}</div>
+      <div class="servico-linha__status">${ROTULO_ESTADO[estado]}</div>
     </div>
   `;
 }
@@ -35,11 +45,13 @@ function linhaServico(s, i) {
 // Pill de cron: nome + próxima execução, com cor pela última execução
 // (verde = SUCCESS, vermelho = falhou). O ponto à esquerda repete a cor.
 function pillCron(c, i) {
+  const estado = estadoDe(c);
+  const classe = estado === "online" ? "ok" : estado; // "ok" | "erro" | "token"
   return `
-    <div class="cron-pill cron-pill--${c.online ? "ok" : "erro"} anima-surgir" style="--ordem: ${i};">
+    <div class="cron-pill cron-pill--${classe} anima-surgir" style="--ordem: ${i};">
       <span class="cron-pill__bolinha"></span>
       <span class="cron-pill__nome">${c.servico}</span>
-      <span class="cron-pill__prox">${proximaExecucaoTexto(c)}</span>
+      <span class="cron-pill__prox">${estado === "token" ? "verifique o token" : proximaExecucaoTexto(c)}</span>
     </div>
   `;
 }

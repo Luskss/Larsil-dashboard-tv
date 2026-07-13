@@ -326,6 +326,88 @@
     }
     .frota-aviso--visivel { display: block; }
 
+    /* ===== Vista Frota por Líder: um card por coordenador (fundo verde,
+       igual à identidade de "Frotas"), com uma grade de mini-KPIs dentro —
+       um por tipo de veículo sob aquele líder. ===== */
+    .lideres-lista {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      align-content: center;
+      justify-content: center;
+      gap: 1.75rem;
+      padding: .5rem;
+    }
+    .lider-card {
+      flex: 0 1 clamp(360px, 30vw, 520px);
+      display: flex;
+      flex-direction: column;
+      gap: 1.4rem;
+      padding: 1.75rem;
+      border-radius: 1.75rem;
+      background: color-mix(in srgb, var(--success) 28%, var(--surface-2));
+      border: 1px solid color-mix(in srgb, var(--success) 45%, var(--border));
+      container-type: inline-size;
+    }
+    .lider-card__nome {
+      font-size: clamp(1.35rem, 3.5cqw, 2rem);
+      font-weight: 800;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lider-card__tipos {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: .9rem;
+    }
+    .lider-tipo {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: .4rem;
+      padding: 1.25rem .5rem;
+      border-radius: 1.1rem;
+      /* Mesmo visual dos KPIs da página Frotas: fundo neutro + borda. */
+      background: var(--surface);
+      border: 2px solid var(--border);
+      text-align: center;
+    }
+    .lider-tipo__valor {
+      font-size: clamp(2rem, 7cqw, 3.25rem);
+      font-weight: 800;
+      line-height: 1;
+      color: var(--cor-tipo, #fff);
+      font-variant-numeric: tabular-nums;
+    }
+    .lider-tipo__nome {
+      font-size: clamp(.65rem, 2cqw, .8rem);
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, #fff 78%, transparent);
+    }
+
+    .lideres-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .lideres-aviso--visivel { display: block; }
+
     /* ===== Vista Mapa da Frota ===== */
     /* O palco ocupa o espaço que sobra; o mundo é rasterizado uma vez num
        <canvas> e toda a animação (rotação + zoom) é um transform CSS no
@@ -547,23 +629,25 @@
     .railway-lista {
       flex: 1;
       min-height: 0;
-      overflow-y: auto;
+      overflow: hidden; /* sem scroll: as linhas se ajustam para caber na tela */
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      grid-template-columns: repeat(4, 1fr); /* 4 colunas fixas */
+      grid-auto-rows: 1fr; /* linhas dividem igualmente a altura disponível */
       gap: 0 2rem;
-      align-content: start;
+      align-content: stretch;
     }
     .servico-linha {
       display: grid;
       grid-template-columns: auto 1fr auto;
       align-items: center;
       gap: 1rem;
-      padding: 1rem .25rem;
+      padding: clamp(.35rem, 1.4vh, 1rem) .25rem; /* padding fluido: encolhe para caber todas as linhas */
       border-bottom: 1px solid var(--border);
       --cor-status: var(--text-dim);
     }
     .servico-linha--online { --cor-status: var(--success); }
     .servico-linha--erro   { --cor-status: var(--critical); }
+    .servico-linha--token  { --cor-status: var(--alert); } /* token inválido/faltando */
     .servico-linha__bolinha {
       width: 12px;
       height: 12px;
@@ -614,8 +698,9 @@
       border: 1px solid var(--border);
       --cor-status: var(--text-dim);
     }
-    .cron-pill--ok   { --cor-status: var(--success); }
-    .cron-pill--erro { --cor-status: var(--critical); }
+    .cron-pill--ok    { --cor-status: var(--success); }
+    .cron-pill--erro  { --cor-status: var(--critical); }
+    .cron-pill--token { --cor-status: var(--alert); } /* token inválido/faltando */
     .cron-pill__bolinha {
       width: 9px;
       height: 9px;
@@ -900,6 +985,19 @@
     <div id="tipos-cards" class="tipos-grid"></div>
   </section>
 
+  <!-- ===== Vista Frota por Líder (qtd de veículos por coordenador) ===== -->
+  <section id="vista-lideres" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Frota por Coordenador</h1>
+      <div id="lideres-total" class="mapa-total"></div>
+    </div>
+
+    <div id="lideres-aviso" class="lideres-aviso" role="alert"></div>
+
+    <!-- Lista de líderes/coordenadores (preenchida por frota-lideres.js) -->
+    <div id="lideres-lista" class="lideres-lista mt-3"></div>
+  </section>
+
   <!-- ===== Vista Mapa da Frota (mapa-múndi anima até o Brasil) ===== -->
   <section id="vista-mapa" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
@@ -967,6 +1065,7 @@
 
   <script src="./main.js" type="module"></script>
   <script src="./frotas.js" type="module"></script>
+  <script src="./frota-lideres.js" type="module"></script>
   <script src="./frota-mapa.js" type="module"></script>
   <script src="./ativos-ti.js" type="module"></script>
   <script src="./helpdesk-chamados.js" type="module"></script>
