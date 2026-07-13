@@ -326,9 +326,9 @@
     }
     .frota-aviso--visivel { display: block; }
 
-    /* ===== Vista Frota por Líder: um card por coordenador (fundo verde,
-       igual à identidade de "Frotas"), com uma grade de mini-KPIs dentro —
-       um por tipo de veículo sob aquele líder. ===== */
+    /* ===== Vista Frota por Líder: um card por coordenador (mesmo visual
+       neutro dos painéis das outras vistas), com uma grade de mini-KPIs
+       dentro — um por tipo de veículo sob aquele líder. ===== */
     .lideres-lista {
       flex: 1;
       min-height: 0;
@@ -347,9 +347,9 @@
       flex-direction: column;
       gap: 1.4rem;
       padding: 1.75rem;
-      border-radius: 1.75rem;
-      background: color-mix(in srgb, var(--success) 28%, var(--surface-2));
-      border: 1px solid color-mix(in srgb, var(--success) 45%, var(--border));
+      border-radius: 1.5rem;
+      background: var(--surface);
+      border: 2px solid var(--border);
       container-type: inline-size;
     }
     .lider-card__nome {
@@ -357,8 +357,7 @@
       font-weight: 800;
       letter-spacing: .02em;
       text-transform: uppercase;
-      color: #fff;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+      color: var(--text);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -376,8 +375,9 @@
       gap: .4rem;
       padding: 1.25rem .5rem;
       border-radius: 1.1rem;
-      /* Mesmo visual dos KPIs da página Frotas: fundo neutro + borda. */
-      background: var(--surface);
+      /* Mesmo visual dos KPIs da página Frotas: fundo neutro + borda.
+         Um degrau acima do card (surface-2) para destacar sobre ele. */
+      background: var(--surface-2);
       border: 2px solid var(--border);
       text-align: center;
     }
@@ -393,7 +393,7 @@
       font-weight: 700;
       letter-spacing: .04em;
       text-transform: uppercase;
-      color: color-mix(in srgb, #fff 78%, transparent);
+      color: var(--text-dim);
     }
 
     .lideres-aviso {
