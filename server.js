@@ -28,6 +28,36 @@ try { process.loadEnvFile(); } catch { /* sem .env, segue com o ambiente */ }
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+// ===== Cabeçalhos de segurança (em toda resposta) =====
+// CSP: scripts só do próprio site (Tailwind é self-hosted em /vendor, e os
+// scripts das páginas são arquivos .js — nenhum <script> inline). style-src
+// precisa de 'unsafe-inline' porque o Tailwind Browser injeta <style> em runtime
+// e as páginas usam style="..." inline. img-src data: cobre os logos em base64.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join("; ");
+
+app.use((_req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // HSTS só faz sentido sob HTTPS (Railway serve por HTTPS em produção).
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
+
 app.use(express.json({ limit: "8mb" })); // logos em base64 podem pesar
 
 // ===== Login (usuário/senha único, ver auth.js) =====

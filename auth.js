@@ -98,8 +98,16 @@ function lerCookieRequisicao(req, nome) {
 }
 
 // Middleware: libera /login, /logout, a página de login e os assets que ela
-// usa (tema.css); o resto — páginas e /api/* — exige sessão válida.
-const LIVRES = new Set(["/login", "/logout", "/login.html", "/tema.css"]);
+// usa (tema.css e o Tailwind self-hosted); o resto — páginas e /api/* — exige
+// sessão válida.
+const LIVRES = new Set([
+  "/login",
+  "/logout",
+  "/login.html",
+  "/login.js",
+  "/tema.css",
+  "/vendor/tailwind-browser.js",
+]);
 
 export function exigirSessao(req, res, next) {
   if (LIVRES.has(req.path)) return next();

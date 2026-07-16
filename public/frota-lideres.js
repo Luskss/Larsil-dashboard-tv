@@ -4,6 +4,7 @@
 
 import { consultarFrotaLideres } from "./downdetector.js";
 import { animarNumero } from "./animacoes.js";
+import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras vistas
 
@@ -46,12 +47,12 @@ function desenharLideres(lideres, total) {
 
   alvo.innerHTML = lideres.map((l, i) => `
     <div class="lider-card anima-surgir" style="--ordem: ${i};">
-      <div class="lider-card__nome" title="${l.nome}">${l.nome}</div>
+      <div class="lider-card__nome" title="${escapar(l.nome)}">${escapar(l.nome)}</div>
       <div class="lider-card__tipos">
         ${(l.tipos || []).map((t) => `
           <div class="lider-tipo" style="--cor-tipo: ${corDoTipo(t.nome)};">
             <div class="lider-tipo__valor" data-qtd>0</div>
-            <div class="lider-tipo__nome">${titulo(t.nome)}</div>
+            <div class="lider-tipo__nome">${escapar(titulo(t.nome))}</div>
           </div>
         `).join("")}
       </div>

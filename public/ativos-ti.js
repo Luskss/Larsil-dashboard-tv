@@ -2,6 +2,7 @@
 // Starlinks). Dados vêm de /api/ativos-ti (SQL Server, inventario.ATIVOS).
 
 import { animarNumero } from "./animacoes.js";
+import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
 
@@ -28,7 +29,7 @@ function desenharCards(tipos) {
   alvo.innerHTML = tipos.map((t, i) =>
     `<div class="painel kpi anima-surgir" style="--cor-kpi: ${CORES_TIPOS[i % CORES_TIPOS.length]}; --ordem: ${i};">
        <div class="kpi__valor">0</div>
-       <div class="kpi__rotulo">${ROTULOS[t.nome] || t.nome}</div>
+       <div class="kpi__rotulo">${escapar(ROTULOS[t.nome] || t.nome)}</div>
      </div>`
   ).join("");
   alvo.querySelectorAll(".kpi__valor").forEach((el, i) => animarNumero(el, tipos[i].qtd));

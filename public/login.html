@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Login — Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="./vendor/tailwind-browser.js"></script>
   <link rel="stylesheet" href="./tema.css">
   <style>
     /* Tema e botões vêm de tema.css. Aqui, só o CSS desta página. */
@@ -74,39 +74,6 @@
     <div id="erro-login" class="erro-login"></div>
   </form>
 
-  <script type="module">
-    const form = document.querySelector("#form-login");
-    const erroEl = document.querySelector("#erro-login");
-    const botao = form.querySelector(".btn-entrar");
-
-    // Se já tiver uma sessão válida, volta direto para o dashboard.
-    const proximo = new URLSearchParams(location.search).get("proximo") || "./index.html";
-
-    form.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      erroEl.textContent = "";
-      botao.disabled = true;
-      try {
-        const resp = await fetch("/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            usuario: form.usuario.value.trim(),
-            senha: form.senha.value,
-          }),
-        });
-        const dados = await resp.json();
-        if (!resp.ok) {
-          erroEl.textContent = dados.erro || "Usuário ou senha inválidos";
-          return;
-        }
-        location.href = proximo;
-      } catch {
-        erroEl.textContent = "Erro ao conectar com o servidor.";
-      } finally {
-        botao.disabled = false;
-      }
-    });
-  </script>
+  <script type="module" src="./login.js"></script>
 </body>
 </html>

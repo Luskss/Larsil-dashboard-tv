@@ -3,6 +3,7 @@
 
 import { consultarFrota } from "./downdetector.js";
 import { animarNumero } from "./animacoes.js";
+import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do dashboard
 const INTERVALO_TROCA_MS = 30 * 1000; // alterna o donut entre status e tipo
@@ -112,7 +113,9 @@ function desenharDonut(itens, total, visao) {
     // Fatia única (100%) não pode fechar o círculo exato, senão o arco some.
     const fim = angulo + Math.min(fracao * 2 * Math.PI, 2 * Math.PI - 0.0001);
     const cor = visao.cor(item.nome, i, proximoNeutro);
-    const nome = titulo(item.nome);
+    // Nome vem do banco (dbo.FROTA) e é interpolado em innerHTML (tooltip,
+    // rótulo SVG, legenda) — escapa aqui, na origem, para evitar XSS.
+    const nome = escapar(titulo(item.nome));
     const pct = formatarPct(fracao * 100);
 
     fatias.push(
@@ -189,7 +192,7 @@ function desenharCardsTipos(tipos) {
   alvo.innerHTML = (tipos || []).map((t, i) =>
     `<div class="painel kpi anima-surgir" style="--cor-kpi: ${corDoTipo(i, proximoNeutro)}; --ordem: ${i};">
        <div class="kpi__valor">0</div>
-       <div class="kpi__rotulo">${titulo(t.nome)}</div>
+       <div class="kpi__rotulo">${escapar(titulo(t.nome))}</div>
      </div>`
   ).join("");
   alvo.querySelectorAll(".kpi__valor").forEach((el, i) => animarNumero(el, tipos[i].qtd));

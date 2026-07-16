@@ -20,6 +20,7 @@
 // são HTML em coordenada de TELA, posicionados quando o mapa para.
 
 import { consultarFrotaLocalizacao } from "./downdetector.js";
+import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do restante
 
@@ -420,10 +421,10 @@ function desenharPinos() {
   ).join("");
 
   rotulos.innerHTML = pontosAtuais.map((p, i) => {
-    const classes = p.classes.slice(0, 3).map((c) => `${tituloClasse(c.nome)} (${c.qtd})`).join(" · ");
+    const classes = p.classes.slice(0, 3).map((c) => `${escapar(tituloClasse(c.nome))} (${c.qtd})`).join(" · ");
     return `<div class="mapa-rotulo" data-i="${i}">
       <div class="mapa-rotulo__topo">
-        <span class="mapa-rotulo__projeto">Projeto ${p.projeto}</span>
+        <span class="mapa-rotulo__projeto">Projeto ${escapar(p.projeto)}</span>
         <span class="mapa-rotulo__qtd">${p.maquinas} máq</span>
       </div>
       <div class="mapa-rotulo__classes">${classes}</div>

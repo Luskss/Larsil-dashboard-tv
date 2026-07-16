@@ -3,6 +3,7 @@
 // o nome de quem atende (ATRIBUIDO_A) e de quem resolveu (RESOLVIDO_POR).
 
 import { animarNumero } from "./animacoes.js";
+import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 30 * 1000; // painel de TV: atualiza quase em tempo real
 
@@ -39,14 +40,7 @@ const COR_PRIORIDADE = {
   BAIXA: "var(--text-dim)",
 };
 
-// Título e nomes vêm do banco — escapa antes de virar HTML.
-function escapar(texto) {
-  return String(texto)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
+// Título e nomes vêm do banco — escapa antes de virar HTML (ver escape.js).
 
 // "Lucas Gabriel Barreto Pereira" -> "Lucas Gabriel" (cabe no card).
 function nomeCurto(nome) {
