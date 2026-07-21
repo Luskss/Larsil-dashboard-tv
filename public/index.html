@@ -140,6 +140,66 @@
       color: var(--text-dim);
     }
 
+    /* Cotações (dólar e soja): blocos 2x1 (duas células de largura, uma de
+       altura), empilhados à direita do relógio. Padding menor que o .widget
+       padrão porque a caixa é baixa, e as fontes escalam pela largura do
+       próprio card (cqw) para caber em qualquer TV. */
+    .cotacao {
+      padding: .5rem .75rem;
+      gap: .15rem;
+    }
+    .cotacao__topo {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: .5rem;
+    }
+    .cotacao__nome {
+      font-size: clamp(.6rem, 5cqw, .85rem);
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    /* Canto direito: variação do dia (dólar) ou data do pregão (soja). */
+    .cotacao__extra {
+      font-size: clamp(.6rem, 5cqw, .85rem);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      color: var(--text-dim);
+    }
+    /* Alta em verde, baixa em vermelho — com a seta junto, a informação
+       nunca depende só da cor. */
+    .cotacao__extra--alta  { color: var(--success); }
+    .cotacao__extra--baixa { color: var(--critical); }
+    /* A fonte cabe o maior valor da coluna (café passa de R$ 1.000/sc, com
+       separador de milhar) sem estourar a largura do bloco. */
+    .cotacao__valor {
+      font-size: clamp(.9rem, 15cqw, 2.2rem);
+      font-weight: 800;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .cotacao__unidade {
+      font-size: clamp(.5rem, 4cqw, .7rem);
+      font-weight: 600;
+      letter-spacing: .02em;
+      color: var(--text-dim);
+      margin-left: .3rem;
+    }
+
+    /* Coluna das cotações à direita do relógio (linhas 1 a 3 da coluna 9, a
+       mesma altura do bloco do relógio). Só a partir de ~1100px, largura em
+       que o grid já tem 10 colunas; abaixo disso os blocos entram no fluxo
+       automático como qualquer tile. */
+    @media (min-width: 1100px) {
+      .pos--dolar { grid-column: 9 / span 2; grid-row: 1; }
+      .pos--soja  { grid-column: 9 / span 2; grid-row: 2; }
+      .pos--cafe  { grid-column: 9 / span 2; grid-row: 3; }
+    }
+
     /* Painel de clima (estilo lovable): clima de agora em cima — temperatura
        grande + sensação/umidade/vento — e a previsão da semana em chips
        embaixo. As fontes escalam pela largura do card (cqw). */
@@ -841,6 +901,8 @@
       color: var(--text-dim);
     }
     .chamado__pessoa strong { color: var(--text); font-weight: 600; }
+    /* Solicitante fica acima do título, colado no cabeçalho do card. */
+    .chamado__solicitante { margin-top: .3rem; }
 
     .chamados-aviso {
       margin-top: 1rem;
@@ -960,6 +1022,37 @@
           </div>
         </div>
         <div id="clima-semana" class="clima-semana"></div>
+      </div>
+
+      <!-- Dólar: 2x1 células, à direita do relógio. -->
+      <div class="widget cotacao bloco--w2 pos--dolar anima-surgir" data-bloco="2" style="--ordem: 3;">
+        <div class="cotacao__topo">
+          <span class="cotacao__nome">Dólar</span>
+          <span id="dolar-variacao" class="cotacao__extra">—</span>
+        </div>
+        <div id="dolar-valor" class="cotacao__valor">R$ --,--</div>
+      </div>
+
+      <!-- Soja (indicador CEPEA/ESALQ): 2x1 células, logo abaixo do dólar. -->
+      <div class="widget cotacao bloco--w2 pos--soja anima-surgir" data-bloco="2" style="--ordem: 4;">
+        <div class="cotacao__topo">
+          <span id="soja-nome" class="cotacao__nome">Soja</span>
+          <span id="soja-data" class="cotacao__extra">—</span>
+        </div>
+        <div class="cotacao__valor">
+          <span id="soja-valor">R$ --,--</span><span id="soja-unidade" class="cotacao__unidade"></span>
+        </div>
+      </div>
+
+      <!-- Café (indicador CEPEA/ESALQ): 2x1 células, fecha a coluna. -->
+      <div class="widget cotacao bloco--w2 pos--cafe anima-surgir" data-bloco="2" style="--ordem: 5;">
+        <div class="cotacao__topo">
+          <span id="cafe-nome" class="cotacao__nome">Café</span>
+          <span id="cafe-data" class="cotacao__extra">—</span>
+        </div>
+        <div class="cotacao__valor">
+          <span id="cafe-valor">R$ --,--</span><span id="cafe-unidade" class="cotacao__unidade"></span>
+        </div>
       </div>
     </div>
   </section>
@@ -1085,6 +1178,7 @@
   <div id="donut-tooltip" class="donut-tooltip" aria-hidden="true"></div>
 
   <script src="./main.js" type="module"></script>
+  <script src="./cotacoes.js" type="module"></script>
   <script src="./frotas.js" type="module"></script>
   <script src="./frota-lideres.js" type="module"></script>
   <script src="./frota-mapa.js" type="module"></script>

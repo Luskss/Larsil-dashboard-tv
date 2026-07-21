@@ -6,6 +6,9 @@
 //   GET  /api/config/:chave     -> valor de uma config (ex.: cidade)
 //   POST /api/config/:chave     -> salva config (body: { valor })
 //   GET  /api/clima?cidade=...   -> clima atual via Open-Meteo
+//   GET  /api/dolar              -> cotação do dólar (USD-BRL) via AwesomeAPI
+//   GET  /api/soja               -> indicador da soja (R$/saca) via CEPEA/ESALQ
+//   GET  /api/cafe               -> indicador do café (R$/saca) via CEPEA/ESALQ
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
@@ -105,28 +108,37 @@ app.post("/api/config/:chave", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== Consulta a APIs externas (clima, dólar, soja) =====
+// Busca com timeout e retry: no Railway o egress para APIs externas às vezes
+// falha de forma intermitente (rede/DNS do datacenter). Abortamos em 8s para
+// não pendurar a resposta e tentamos de novo antes de desistir.
+async function buscarComRetry(url, { tentativas = 3, ...opcoes } = {}) {
+  let ultimoErro;
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      const resp = await fetch(url, { ...opcoes, signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) throw new Error(`A API respondeu ${resp.status}`);
+      return resp;
+    } catch (erro) {
+      ultimoErro = erro;
+      if (i < tentativas - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw ultimoErro;
+}
+
+async function buscarJson(url, opcoes) {
+  return (await buscarComRetry(url, opcoes)).json();
+}
+
+async function buscarTexto(url, opcoes) {
+  return (await buscarComRetry(url, opcoes)).text();
+}
+
 // ===== Clima (Open-Meteo: geocoding + forecast) =====
 app.get("/api/clima", async (req, res) => {
   const cidade = String(req.query.cidade || "").trim();
   if (!cidade) return res.status(400).json({ erro: "Informe a cidade" });
-
-  // Busca com timeout e retry: no Railway o egress para APIs externas às vezes
-  // falha de forma intermitente (rede/DNS do datacenter). Abortamos em 8s para
-  // não pendurar a resposta e tentamos de novo antes de desistir.
-  async function buscarJson(url, tentativas = 3) {
-    let ultimoErro;
-    for (let i = 0; i < tentativas; i++) {
-      try {
-        const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (!resp.ok) throw new Error(`Open-Meteo respondeu ${resp.status}`);
-        return await resp.json();
-      } catch (erro) {
-        ultimoErro = erro;
-        if (i < tentativas - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
-      }
-    }
-    throw ultimoErro;
-  }
 
   try {
     const geoUrl =
@@ -161,6 +173,101 @@ app.get("/api/clima", async (req, res) => {
     res.status(502).json({ erro: "Erro ao consultar o clima" });
   }
 });
+
+// ===== Dólar (AwesomeAPI: cotação USD -> BRL, sem chave) =====
+// O widget do dashboard atualiza a cada 5 min, mas várias telas/recarregamentos
+// bateriam aqui ao mesmo tempo — o cache curto segura isso sem envelhecer a
+// cotação (o mercado de câmbio se move em segundos, não em minutos).
+const DOLAR_URL = "https://economia.awesomeapi.com.br/json/last/USD-BRL";
+const DOLAR_CACHE_MS = 60 * 1000;
+let dolarCache = null; // { dados, em }
+
+app.get("/api/dolar", async (_req, res) => {
+  if (dolarCache && Date.now() - dolarCache.em < DOLAR_CACHE_MS) {
+    return res.json(dolarCache.dados);
+  }
+
+  try {
+    const cotacao = (await buscarJson(DOLAR_URL)).USDBRL;
+    if (!cotacao?.bid) throw new Error("Resposta sem cotação");
+
+    const dados = {
+      valor: Number(cotacao.bid),
+      // pctChange = variação percentual do dia (negativa quando o dólar cai).
+      variacao: Number(cotacao.pctChange),
+      maxima: Number(cotacao.high),
+      minima: Number(cotacao.low),
+      atualizadoEm: cotacao.create_date || null,
+    };
+    dolarCache = { dados, em: Date.now() };
+    res.json(dados);
+  } catch (erro) {
+    console.error("Erro ao consultar o dólar:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar a cotação do dólar" });
+  }
+});
+
+// ===== Commodities (indicadores CEPEA/ESALQ) =====
+// O CEPEA não tem API pública, mas publica um widget oficial para embutir em
+// sites — é dele que saem as cotações (uma tabelinha HTML que a gente lê aqui).
+// Cada produto é um id de indicador, trocável pelo .env:
+//   soja -> 12 "Soja - PR" (mercado interno; 92 = "Soja Paranaguá", porto)
+//   café -> 23 "Café Arábica" (24 = "Café Robusta")
+// Os indicadores são diários (só dias úteis), por isso o cache longo.
+const CEPEA_URL = "https://www.cepea.org.br/br/widgetproduto.js.php?id_indicador[]=";
+const CEPEA_CACHE_MS = 30 * 60 * 1000;
+// Sem User-Agent de navegador a Cloudflare do CEPEA devolve 403.
+const UA_NAVEGADOR =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+// Linha da tabela do widget: data | produto + unidade | R$ valor.
+const LINHA_CEPEA =
+  /<td>(\d{2}\/\d{2}\/\d{4})<\/td>\s*<td>\s*<span[^>]*>([^<]+)<\/span>.*?<span class="unidade">([^<]+)<\/span>.*?<td>\s*R\$\s*<span[^>]*>([\d.,]+)<\/span>/s;
+
+const cepeaCache = new Map(); // indicador -> { dados, em }
+
+async function cotacaoCepea(indicador) {
+  const salvo = cepeaCache.get(indicador);
+  if (salvo && Date.now() - salvo.em < CEPEA_CACHE_MS) return salvo.dados;
+
+  const html = await buscarTexto(CEPEA_URL + indicador, {
+    headers: { "User-Agent": UA_NAVEGADOR },
+  });
+
+  const achado = html.match(LINHA_CEPEA);
+  if (!achado) throw new Error("Widget do CEPEA veio sem a linha da cotação");
+  const [, data, produto, unidade, valor] = achado;
+
+  const dados = {
+    // Nomes curtos: o card do dashboard é pequeno (bloco 2x1).
+    produto: produto.trim().slice(0, 40),
+    unidade: unidade.trim().slice(0, 20),
+    // "1.234,56" (pt-BR) -> 1234.56
+    valor: Number(valor.replace(/\./g, "").replace(",", ".")),
+    data, // dd/mm/aaaa do pregão — o indicador não sai fim de semana
+  };
+  if (!Number.isFinite(dados.valor)) throw new Error(`Valor ilegível: ${valor}`);
+
+  cepeaCache.set(indicador, { dados, em: Date.now() });
+  return dados;
+}
+
+// Monta a rota de um produto: id do .env (só dígitos) ou o padrão.
+function rotaCepea(variavelEnv, padrao, nome) {
+  return async (_req, res) => {
+    try {
+      const indicador = String(process.env[variavelEnv] || padrao).replace(/\D/g, "") || padrao;
+      res.json(await cotacaoCepea(indicador));
+    } catch (erro) {
+      console.error(`Erro ao consultar ${nome}:`, erro.message);
+      res.status(502).json({ erro: `Erro ao consultar a cotação (${nome})` });
+    }
+  };
+}
+
+app.get("/api/soja", rotaCepea("SOJA_INDICADOR", "12", "soja"));
+app.get("/api/cafe", rotaCepea("CAFE_INDICADOR", "23", "café"));
 
 // ===== SQL Server (compartilhado entre Frota e Ativos de TI) =====
 // Mesmo banco, duas rotas. O pool de conexões é criado na primeira chamada
@@ -424,8 +531,9 @@ app.get("/api/ativos-ti", async (_req, res) => {
 
 // ===== Helpdesk (SQL Server) =====
 // Chamados recentes de dbo.HELPDESK_CHAMADOS, separados em três colunas por
-// status. ATRIBUIDO_A e RESOLVIDO_POR são IDs de dbo.HELPDESK_USUARIOS, por
-// isso o JOIN para trazer o nome de quem atende / resolveu.
+// status. ID_SOLICITANTE, ATRIBUIDO_A e RESOLVIDO_POR são IDs de
+// dbo.HELPDESK_USUARIOS, por isso os JOINs para trazer o nome de quem abriu,
+// de quem atende e de quem resolveu.
 const STATUS_HELPDESK = ["ABERTO", "EM_ATENDIMENTO", "RESOLVIDO"];
 const CHAMADOS_POR_COLUNA = 5;
 
@@ -441,17 +549,18 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
     // ROW_NUMBER por status: cada coluna recebe seus N chamados mais recentes
     // (resolvidos ordenam por RESOLVIDO_EM; os demais, por CRIADO_EM).
     const { recordset } = await pool.request().query(
-      `SELECT id, titulo, prioridade, status, criadoEm, resolvidoEm, atribuidoA, resolvidoPor
+      `SELECT id, titulo, prioridade, status, criadoEm, resolvidoEm, solicitante, atribuidoA, resolvidoPor
          FROM (
            SELECT c.ID AS id, c.TITULO AS titulo, c.PRIORIDADE AS prioridade,
                   UPPER(LTRIM(RTRIM(c.STATUS))) AS status,
                   c.CRIADO_EM AS criadoEm, c.RESOLVIDO_EM AS resolvidoEm,
-                  ua.NOME AS atribuidoA, ur.NOME AS resolvidoPor,
+                  usol.NOME AS solicitante, ua.NOME AS atribuidoA, ur.NOME AS resolvidoPor,
                   ROW_NUMBER() OVER (
                     PARTITION BY UPPER(LTRIM(RTRIM(c.STATUS)))
                     ORDER BY COALESCE(c.RESOLVIDO_EM, c.CRIADO_EM) DESC
                   ) AS rn
              FROM dbo.HELPDESK_CHAMADOS c
+             LEFT JOIN dbo.HELPDESK_USUARIOS usol ON usol.ID = c.ID_SOLICITANTE
              LEFT JOIN dbo.HELPDESK_USUARIOS ua ON ua.ID = c.ATRIBUIDO_A
              LEFT JOIN dbo.HELPDESK_USUARIOS ur ON ur.ID = c.RESOLVIDO_POR
             WHERE UPPER(LTRIM(RTRIM(c.STATUS))) IN (${statusIn})

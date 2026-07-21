@@ -1,6 +1,7 @@
 // Página Helpdesk: chamados recentes de dbo.HELPDESK_CHAMADOS separados em
 // três colunas por status. Dados vêm de /api/helpdesk-chamados, que já traz
-// o nome de quem atende (ATRIBUIDO_A) e de quem resolveu (RESOLVIDO_POR).
+// o nome de quem abriu (ID_SOLICITANTE), de quem atende (ATRIBUIDO_A) e de
+// quem resolveu (RESOLVIDO_POR).
 
 import { animarNumero } from "./animacoes.js";
 import { escapar } from "./escape.js";
@@ -43,7 +44,9 @@ const COR_PRIORIDADE = {
 // Título e nomes vêm do banco — escapa antes de virar HTML (ver escape.js).
 
 // "Lucas Gabriel Barreto Pereira" -> "Lucas Gabriel" (cabe no card).
+// Sem nome (chamado sem solicitante no banco) devolve "" para quem chamou decidir.
 function nomeCurto(nome) {
+  if (!nome) return "";
   return String(nome).trim().split(/\s+/).slice(0, 2).join(" ");
 }
 
@@ -68,6 +71,7 @@ function desenharCard(chamado, coluna, ordem, ehNovo) {
       <span>#${chamado.id} · ${formatarHorario(coluna.horario(chamado))}${ehNovo ? '<span class="chamado__novo-selo">NOVO</span>' : ""}</span>
       ${prioridade ? `<span class="chamado__prioridade" style="--cor-prioridade: ${corPrioridade};">${escapar(prioridade)}</span>` : ""}
     </div>
+    <div class="chamado__pessoa chamado__solicitante">Solicitante: <strong>${escapar(nomeCurto(chamado.solicitante) || "não informado")}</strong></div>
     <div class="chamado__titulo">${escapar(chamado.titulo || "(sem título)")}</div>
     <div class="chamado__pessoa">${coluna.pessoa(chamado)}</div>
   </div>`;

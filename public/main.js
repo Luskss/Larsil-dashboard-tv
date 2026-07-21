@@ -230,6 +230,4 @@ window.addEventListener("DOMContentLoaded", () => {
   atualizarLua();
   setInterval(atualizarClima, INTERVALO_ATUALIZACAO_MS);
   setInterval(atualizarLua, INTERVALO_ATUALIZACAO_MS);
-
-  document.querySelector("#atualizar-btn").addEventListener("click", atualizarClima);
 });
