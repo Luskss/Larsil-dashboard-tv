@@ -1,4 +1,4 @@
-// Cotações do dashboard (blocos 2x1 empilhados à direita do relógio):
+// Cotações do dashboard (blocos 3x1 empilhados à direita do relógio):
 //   Dólar -> /api/dolar (AwesomeAPI, USD-BRL, com a variação do dia)
 //   Soja  -> /api/soja  (indicador CEPEA/ESALQ, R$ por saca)
 //   Café  -> /api/cafe  (indicador CEPEA/ESALQ, R$ por saca)
@@ -46,7 +46,7 @@ async function atualizarDolar() {
   }
 }
 
-// "sc de 60kg" -> "/sc": no bloco 2x1 só cabe a unidade, e no mercado a saca
+// "sc de 60kg" -> "/sc": ao lado do valor só cabe a unidade, e no mercado a saca
 // de soja é sempre a de 60kg. Serve para qualquer indicador do CEPEA ("@",
 // "kg"...), sempre pegando o pedaço antes do "de".
 function unidadeCurta(unidade) {

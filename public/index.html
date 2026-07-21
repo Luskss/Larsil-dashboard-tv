@@ -68,6 +68,7 @@
        Tamanhos de bloco (combine as classes):
          (nenhuma)     -> 1x1
          .bloco--w2    -> 2 colunas
+         .bloco--w3    -> 3 colunas
          .bloco--h2    -> 2 fileiras
          .bloco--w2h2  -> 2x2
          .bloco--w3h2  -> 3x2                                              */
@@ -84,6 +85,7 @@
       border: 2px solid var(--border);
     }
     .bloco--w2   { grid-column: span 2; }
+    .bloco--w3   { grid-column: span 3; }
     .bloco--h2   { grid-row: span 2; }
     .bloco--w2h2 { grid-column: span 2; grid-row: span 2; }
     .bloco--w3h2 { grid-column: span 3; grid-row: span 2; }
@@ -140,13 +142,31 @@
       color: var(--text-dim);
     }
 
-    /* Cotações (dólar e soja): blocos 2x1 (duas células de largura, uma de
-       altura), empilhados à direita do relógio. Padding menor que o .widget
-       padrão porque a caixa é baixa, e as fontes escalam pela largura do
-       próprio card (cqw) para caber em qualquer TV. */
+    /* Cotações (dólar, soja, café, milho): blocos 3x1 (três células de
+       largura, uma de altura), empilhados à direita do relógio. Ícone à
+       esquerda + texto na coluna ao lado. Padding menor que o .widget padrão
+       porque a caixa é baixa, e as fontes escalam pela largura do próprio
+       card (cqw) para caber em qualquer TV. */
     .cotacao {
-      padding: .5rem .75rem;
+      flex-direction: row;
+      align-items: center;
+      padding: .5rem .9rem;
+      gap: .75rem;
+    }
+    /* Ícone do indicador: só traço, na cor cheia do texto (--text-dim tem
+       alfa e some no fundo escuro visto de longe). */
+    .cotacao__icone {
+      width: clamp(1.4rem, 14cqw, 2.6rem);
+      aspect-ratio: 1;
+      flex: 0 0 auto;
+      color: var(--text);
+    }
+    .cotacao__dados {
+      display: flex;
+      flex-direction: column;
       gap: .15rem;
+      flex: 1;
+      min-width: 0;
     }
     .cotacao__topo {
       display: flex;
@@ -154,12 +174,18 @@
       justify-content: space-between;
       gap: .5rem;
     }
+    /* O nome vem da API ("Café Arábica", "Soja - PR"): corta com reticências
+       em vez de empurrar a data para fora do card. */
     .cotacao__nome {
       font-size: clamp(.6rem, 5cqw, .85rem);
       font-weight: 700;
       letter-spacing: .08em;
       text-transform: uppercase;
       color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
     /* Canto direito: variação do dia (dólar) ou data do pregão (soja). */
     .cotacao__extra {
@@ -168,15 +194,17 @@
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
       color: var(--text-dim);
+      flex: 0 0 auto;
     }
     /* Alta em verde, baixa em vermelho — com a seta junto, a informação
        nunca depende só da cor. */
     .cotacao__extra--alta  { color: var(--success); }
     .cotacao__extra--baixa { color: var(--critical); }
     /* A fonte cabe o maior valor da coluna (café passa de R$ 1.000/sc, com
-       separador de milhar) sem estourar a largura do bloco. */
+       separador de milhar) sem estourar a largura do bloco — o cqw é menor
+       que o de um bloco 2x1 porque o ícone já consome parte da largura. */
     .cotacao__valor {
-      font-size: clamp(.9rem, 15cqw, 2.2rem);
+      font-size: clamp(.9rem, 12cqw, 2.2rem);
       font-weight: 800;
       line-height: 1.1;
       font-variant-numeric: tabular-nums;
@@ -190,16 +218,16 @@
       margin-left: .3rem;
     }
 
-    /* Coluna das cotações à direita do relógio (coluna 9, linhas 1 a 4: as
-       três primeiras acompanham a altura do relógio e a quarta encosta na
-       fileira do clima). Só a partir de ~1100px, largura em que o grid já tem
-       10 colunas; abaixo disso os blocos entram no fluxo automático como
+    /* Coluna das cotações à direita do relógio (colunas 9 a 11, linhas 1 a 4:
+       as três primeiras acompanham a altura do relógio e a quarta encosta na
+       fileira do clima). Só a partir de ~1300px, largura em que o grid já tem
+       11 colunas; abaixo disso os blocos entram no fluxo automático como
        qualquer tile. */
-    @media (min-width: 1100px) {
-      .pos--dolar { grid-column: 9 / span 2; grid-row: 1; }
-      .pos--soja  { grid-column: 9 / span 2; grid-row: 2; }
-      .pos--cafe  { grid-column: 9 / span 2; grid-row: 3; }
-      .pos--milho { grid-column: 9 / span 2; grid-row: 4; }
+    @media (min-width: 1300px) {
+      .pos--dolar { grid-column: 9 / span 3; grid-row: 1; }
+      .pos--soja  { grid-column: 9 / span 3; grid-row: 2; }
+      .pos--cafe  { grid-column: 9 / span 3; grid-row: 3; }
+      .pos--milho { grid-column: 9 / span 3; grid-row: 4; }
     }
 
     /* Painel de clima (estilo lovable): clima de agora em cima — temperatura
@@ -1066,45 +1094,84 @@
         <div id="clima-semana" class="clima-semana"></div>
       </div>
 
-      <!-- Dólar: 2x1 células, à direita do relógio. -->
-      <div class="widget cotacao bloco--w2 pos--dolar anima-surgir" data-bloco="2" style="--ordem: 3;">
-        <div class="cotacao__topo">
-          <span class="cotacao__nome">Dólar</span>
-          <span id="dolar-variacao" class="cotacao__extra">—</span>
-        </div>
-        <div id="dolar-valor" class="cotacao__valor">R$ --,--</div>
-      </div>
-
-      <!-- Soja (indicador CEPEA/ESALQ): 2x1 células, logo abaixo do dólar. -->
-      <div class="widget cotacao bloco--w2 pos--soja anima-surgir" data-bloco="2" style="--ordem: 4;">
-        <div class="cotacao__topo">
-          <span id="soja-nome" class="cotacao__nome">Soja</span>
-          <span id="soja-data" class="cotacao__extra">—</span>
-        </div>
-        <div class="cotacao__valor">
-          <span id="soja-valor">R$ --,--</span><span id="soja-unidade" class="cotacao__unidade"></span>
+      <!-- Dólar: 3x1 células, à direita do relógio. Ícone: cifrão. -->
+      <div class="widget cotacao bloco--w3 pos--dolar anima-surgir" data-bloco="3" style="--ordem: 3;">
+        <svg class="cotacao__icone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 6.5v11"/>
+          <path d="M14.6 9.3c-.5-.8-1.5-1.3-2.6-1.3-1.6 0-2.8.9-2.8 2s1.1 1.7 2.8 2.1c1.7.4 2.8 1 2.8 2.1s-1.2 2-2.8 2c-1.1 0-2.1-.5-2.6-1.3"/>
+        </svg>
+        <div class="cotacao__dados">
+          <div class="cotacao__topo">
+            <span class="cotacao__nome">Dólar</span>
+            <span id="dolar-variacao" class="cotacao__extra">—</span>
+          </div>
+          <div id="dolar-valor" class="cotacao__valor">R$ --,--</div>
         </div>
       </div>
 
-      <!-- Café (indicador CEPEA/ESALQ): 2x1 células. -->
-      <div class="widget cotacao bloco--w2 pos--cafe anima-surgir" data-bloco="2" style="--ordem: 5;">
-        <div class="cotacao__topo">
-          <span id="cafe-nome" class="cotacao__nome">Café</span>
-          <span id="cafe-data" class="cotacao__extra">—</span>
-        </div>
-        <div class="cotacao__valor">
-          <span id="cafe-valor">R$ --,--</span><span id="cafe-unidade" class="cotacao__unidade"></span>
+      <!-- Soja (indicador CEPEA/ESALQ): 3x1 células, logo abaixo do dólar.
+           Ícone: vagem com três grãos. -->
+      <div class="widget cotacao bloco--w3 pos--soja anima-surgir" data-bloco="3" style="--ordem: 4;">
+        <svg class="cotacao__icone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <g transform="rotate(-45 12 12)">
+            <rect x="4.5" y="8.5" width="15" height="7" rx="3.5"/>
+            <!-- Traço mais fino nos grãos: com 2 eles viram borrão no
+                 tamanho real do card e a vagem lê como elo de corrente. -->
+            <circle cx="8.5" cy="12" r="1.7" stroke-width="1.4"/>
+            <circle cx="12" cy="12" r="1.7" stroke-width="1.4"/>
+            <circle cx="15.5" cy="12" r="1.7" stroke-width="1.4"/>
+          </g>
+        </svg>
+        <div class="cotacao__dados">
+          <div class="cotacao__topo">
+            <span id="soja-nome" class="cotacao__nome">Soja</span>
+            <span id="soja-data" class="cotacao__extra">—</span>
+          </div>
+          <div class="cotacao__valor">
+            <span id="soja-valor">R$ --,--</span><span id="soja-unidade" class="cotacao__unidade"></span>
+          </div>
         </div>
       </div>
 
-      <!-- Milho (indicador CEPEA/ESALQ): 2x1 células, fecha a coluna. -->
-      <div class="widget cotacao bloco--w2 pos--milho anima-surgir" data-bloco="2" style="--ordem: 6;">
-        <div class="cotacao__topo">
-          <span id="milho-nome" class="cotacao__nome">Milho</span>
-          <span id="milho-data" class="cotacao__extra">—</span>
+      <!-- Café (indicador CEPEA/ESALQ): 3x1 células. Ícone: grão com fenda. -->
+      <div class="widget cotacao bloco--w3 pos--cafe anima-surgir" data-bloco="3" style="--ordem: 5;">
+        <svg class="cotacao__icone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <g transform="rotate(-35 12 12)">
+            <ellipse cx="12" cy="12" rx="5.5" ry="8.5"/>
+            <path d="M12 3.5c-2 2.8-2 5.7 0 8.5s2 5.7 0 8.5"/>
+          </g>
+        </svg>
+        <div class="cotacao__dados">
+          <div class="cotacao__topo">
+            <span id="cafe-nome" class="cotacao__nome">Café</span>
+            <span id="cafe-data" class="cotacao__extra">—</span>
+          </div>
+          <div class="cotacao__valor">
+            <span id="cafe-valor">R$ --,--</span><span id="cafe-unidade" class="cotacao__unidade"></span>
+          </div>
         </div>
-        <div class="cotacao__valor">
-          <span id="milho-valor">R$ --,--</span><span id="milho-unidade" class="cotacao__unidade"></span>
+      </div>
+
+      <!-- Milho (indicador CEPEA/ESALQ): 3x1 células, fecha a coluna.
+           Ícone: espiga com as fileiras de grãos. -->
+      <div class="widget cotacao bloco--w3 pos--milho anima-surgir" data-bloco="3" style="--ordem: 6;">
+        <svg class="cotacao__icone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2.5c3 2 4.6 5.4 4.6 8.8 0 3.4-1.6 6.6-4.6 8.4-3-1.8-4.6-5-4.6-8.4 0-3.4 1.6-6.8 4.6-8.8Z"/>
+          <path d="M12 3v16M8.1 8h7.8M7.5 11.5h9M8.1 15h7.8" stroke-width="1.5"/>
+        </svg>
+        <div class="cotacao__dados">
+          <div class="cotacao__topo">
+            <span id="milho-nome" class="cotacao__nome">Milho</span>
+            <span id="milho-data" class="cotacao__extra">—</span>
+          </div>
+          <div class="cotacao__valor">
+            <span id="milho-valor">R$ --,--</span><span id="milho-unidade" class="cotacao__unidade"></span>
+          </div>
         </div>
       </div>
     </div>
