@@ -218,16 +218,18 @@
       margin-left: .3rem;
     }
 
-    /* Coluna das cotações à direita do relógio (colunas 9 a 11, linhas 1 a 4:
-       as três primeiras acompanham a altura do relógio e a quarta encosta na
-       fileira do clima). Só a partir de ~1300px, largura em que o grid já tem
-       11 colunas; abaixo disso os blocos entram no fluxo automático como
-       qualquer tile. */
+    /* Coluna das cotações à direita do relógio (colunas 9 a 11, linhas 1 a 6:
+       as três primeiras acompanham a altura do relógio e as três últimas
+       descem ao lado do clima). Só a partir de ~1300px, largura em que o grid
+       já tem 11 colunas; abaixo disso os blocos entram no fluxo automático
+       como qualquer tile. */
     @media (min-width: 1300px) {
       .pos--dolar { grid-column: 9 / span 3; grid-row: 1; }
       .pos--soja  { grid-column: 9 / span 3; grid-row: 2; }
       .pos--cafe  { grid-column: 9 / span 3; grid-row: 3; }
       .pos--milho { grid-column: 9 / span 3; grid-row: 4; }
+      .pos--selic { grid-column: 9 / span 3; grid-row: 5; }
+      .pos--igpm  { grid-column: 9 / span 3; grid-row: 6; }
     }
 
     /* Painel de clima (estilo lovable): clima de agora em cima — temperatura
@@ -1171,6 +1173,46 @@
           </div>
           <div class="cotacao__valor">
             <span id="milho-valor">R$ --,--</span><span id="milho-unidade" class="cotacao__unidade"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selic (meta do Copom, SGS/BCB): 3x1 células, fecha a coluna. O canto
+           traz "a.a." fixo, e não a data: a série vem preenchida com datas
+           futuras até a próxima reunião (ver /api/selic no server.js).
+           Ícone: percentual. -->
+      <div class="widget cotacao bloco--w3 pos--selic anima-surgir" data-bloco="3" style="--ordem: 7;">
+        <svg class="cotacao__icone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="7" cy="7" r="2.5"/>
+          <circle cx="17" cy="17" r="2.5"/>
+          <path d="M18.5 5.5 5.5 18.5"/>
+        </svg>
+        <div class="cotacao__dados">
+          <div class="cotacao__topo">
+            <span class="cotacao__nome">Selic</span>
+            <span class="cotacao__extra">a.a.</span>
+          </div>
+          <div id="selic-valor" class="cotacao__valor">--,--%</div>
+        </div>
+      </div>
+
+      <!-- IGP-M (FGV, via SGS/BCB): 3x1 células, último da coluna. O valor é o
+           acumulado em 12 meses (o dos reajustes de contrato); o canto traz o
+           mês de referência. Ícone: linha de tendência. -->
+      <div class="widget cotacao bloco--w3 pos--igpm anima-surgir" data-bloco="3" style="--ordem: 8;">
+        <svg class="cotacao__icone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 17.5 9.5 11l4 4 7.5-7.5"/>
+          <path d="M15.5 7H21v5.5"/>
+        </svg>
+        <div class="cotacao__dados">
+          <div class="cotacao__topo">
+            <span class="cotacao__nome">IGP-M</span>
+            <span id="igpm-data" class="cotacao__extra">—</span>
+          </div>
+          <div class="cotacao__valor">
+            <span id="igpm-valor">--,--%</span><span class="cotacao__unidade">acum. 12m</span>
           </div>
         </div>
       </div>

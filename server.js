@@ -10,6 +10,8 @@
 //   GET  /api/soja               -> indicador da soja (R$/saca) via CEPEA/ESALQ
 //   GET  /api/cafe               -> indicador do café (R$/saca) via CEPEA/ESALQ
 //   GET  /api/milho              -> indicador do milho (R$/saca) via CEPEA/ESALQ
+//   GET  /api/selic              -> meta Selic do Copom (% a.a.) via SGS/BCB
+//   GET  /api/igpm               -> IGP-M acumulado em 12 meses (%) via SGS/BCB
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
@@ -359,6 +361,109 @@ function rotaCepea(variavelEnv, padrao, nome) {
 app.get("/api/soja", rotaCepea("SOJA_INDICADOR", "12", "soja"));
 app.get("/api/cafe", rotaCepea("CAFE_INDICADOR", "23", "café"));
 app.get("/api/milho", rotaCepea("MILHO_INDICADOR", "77", "milho"));
+
+// ===== Selic (meta do Copom — série 432 do SGS/Banco Central) =====
+// A meta só muda nas reuniões do Copom (a cada ~45 dias), por isso o cache
+// longo. Detalhe da série: ela é diária e o BC já a publica preenchida até a
+// véspera da próxima reunião, então os últimos registros têm data FUTURA —
+// todos com a meta vigente hoje. Por isso o card mostra "a.a." no canto, e
+// não a data como os indicadores do CEPEA.
+const SELIC_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json";
+const SELIC_CACHE_MS = 6 * 60 * 60 * 1000;
+let selicCache = null; // { dados, em }
+
+async function buscarSelic() {
+  const linhas = await buscarJson(SELIC_URL, { tentativas: 2, timeoutMs: 6000 });
+  if (!Array.isArray(linhas) || linhas.length === 0) throw new Error("SGS não devolveu registros");
+
+  // "14.25" (o SGS usa ponto decimal, mesmo com data em pt-BR) -> 14.25
+  const valor = Number(linhas.at(-1).valor);
+  if (!Number.isFinite(valor)) throw new Error(`Valor ilegível: ${linhas.at(-1).valor}`);
+  return { valor, data: linhas.at(-1).data };
+}
+
+app.get("/api/selic", async (_req, res) => {
+  if (selicCache && Date.now() - selicCache.em < SELIC_CACHE_MS) {
+    return res.json(selicCache.dados);
+  }
+
+  try {
+    const dados = await buscarSelic();
+    selicCache = { dados, em: Date.now() };
+    res.json(dados);
+  } catch (erro) {
+    // Mesma ideia do CEPEA: a meta vigente continua valendo por semanas, então
+    // um fora do ar do BC não deve zerar o card.
+    if (selicCache) {
+      console.warn(`Selic falhou (${erro.message}); mantendo a meta de ${selicCache.dados.data}`);
+      return res.json(selicCache.dados);
+    }
+    console.error("Erro ao consultar a Selic:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar a Selic", detalhe: erro.message });
+  }
+});
+
+// ===== IGP-M (FGV — série 189 do SGS/Banco Central) =====
+// O SGS só publica a variação MENSAL; o número que se cita ("o IGP-M está em
+// X%", o dos reajustes de contrato) é o acumulado em 12 meses, que sai daqui
+// compondo os 12 últimos meses: (1+i1)(1+i2)...(1+i12) - 1. Somar os 12 daria
+// um valor errado (juros sobre juros), a diferença passa de 0,1 p.p. em anos
+// de inflação alta.
+// A FGV divulga uma vez por mês (fim do mês de referência), daí o cache longo.
+const IGPM_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.189/dados/ultimos/12?formato=json";
+const IGPM_CACHE_MS = 6 * 60 * 60 * 1000;
+let igpmCache = null; // { dados, em }
+
+// "01/06/2026" -> Date. O SGS manda a data em pt-BR e o mês vem sempre no dia 1º.
+function dataSgs(texto) {
+  const [dia, mes, ano] = String(texto || "").split("/").map(Number);
+  return new Date(ano, mes - 1, dia);
+}
+
+async function buscarIgpm() {
+  const linhas = await buscarJson(IGPM_URL, { tentativas: 2, timeoutMs: 6000 });
+  if (!Array.isArray(linhas) || linhas.length < 12) {
+    throw new Error(`SGS devolveu ${linhas?.length ?? 0} meses (esperado 12)`);
+  }
+
+  let fator = 1;
+  for (const linha of linhas) {
+    const mensal = Number(linha.valor);
+    if (!Number.isFinite(mensal)) throw new Error(`Valor ilegível: ${linha.valor}`);
+    fator *= 1 + mensal / 100;
+  }
+
+  // O mês de referência é o mais recente do lote. Vou pelo maior em vez do
+  // último porque a ordem do SGS varia de série para série (a 432 vem
+  // crescente; a 1178, decrescente) — no produto acima a ordem não importa,
+  // aqui importaria.
+  const recente = linhas.reduce((a, b) => (dataSgs(b.data) > dataSgs(a.data) ? b : a));
+
+  return {
+    valor: (fator - 1) * 100, // acumulado em 12 meses, em %
+    mensal: Number(recente.valor),
+    data: recente.data,
+  };
+}
+
+app.get("/api/igpm", async (_req, res) => {
+  if (igpmCache && Date.now() - igpmCache.em < IGPM_CACHE_MS) {
+    return res.json(igpmCache.dados);
+  }
+
+  try {
+    const dados = await buscarIgpm();
+    igpmCache = { dados, em: Date.now() };
+    res.json(dados);
+  } catch (erro) {
+    if (igpmCache) {
+      console.warn(`IGP-M falhou (${erro.message}); mantendo o índice de ${igpmCache.dados.data}`);
+      return res.json(igpmCache.dados);
+    }
+    console.error("Erro ao consultar o IGP-M:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar o IGP-M", detalhe: erro.message });
+  }
+});
 
 // ===== SQL Server (compartilhado entre Frota e Ativos de TI) =====
 // Mesmo banco, duas rotas. O pool de conexões é criado na primeira chamada
