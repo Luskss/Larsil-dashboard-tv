@@ -9,6 +9,7 @@
 //   GET  /api/dolar              -> dólar (USD-BRL): AwesomeAPI, com PTAX do BC de reserva
 //   GET  /api/soja               -> indicador da soja (R$/saca) via CEPEA/ESALQ
 //   GET  /api/cafe               -> indicador do café (R$/saca) via CEPEA/ESALQ
+//   GET  /api/milho              -> indicador do milho (R$/saca) via CEPEA/ESALQ
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
@@ -272,8 +273,9 @@ app.get("/api/dolar", async (_req, res) => {
 // O CEPEA não tem API pública, mas publica um widget oficial para embutir em
 // sites — é dele que saem as cotações (uma tabelinha HTML que a gente lê aqui).
 // Cada produto é um id de indicador, trocável pelo .env:
-//   soja -> 12 "Soja - PR" (mercado interno; 92 = "Soja Paranaguá", porto)
-//   café -> 23 "Café Arábica" (24 = "Café Robusta")
+//   soja  -> 12 "Soja - PR" (mercado interno; 92 = "Soja Paranaguá", porto)
+//   café  -> 23 "Café Arábica" (24 = "Café Robusta")
+//   milho -> 77 "Milho" (indicador ESALQ/BM&FBovespa, Campinas)
 // Os indicadores são diários (só dias úteis), por isso o cache longo.
 const CEPEA_URL = "https://www.cepea.org.br/br/widgetproduto.js.php?id_indicador[]=";
 const CEPEA_CACHE_MS = 30 * 60 * 1000;
@@ -292,8 +294,30 @@ async function cotacaoCepea(indicador) {
   const salvo = cepeaCache.get(indicador);
   if (salvo && Date.now() - salvo.em < CEPEA_CACHE_MS) return salvo.dados;
 
+  try {
+    return await buscarCotacaoCepea(indicador);
+  } catch (erro) {
+    // A Cloudflare do CEPEA devolve 403 de vez em quando (visto na prática,
+    // com a chamada seguinte voltando ao normal). Como o indicador é diário, o
+    // último valor bom continua valendo — melhor mostrá-lo do que zerar o
+    // card. A tela não mente: a data do pregão vai junto com o valor.
+    if (salvo) {
+      console.warn(
+        `CEPEA ${indicador} falhou (${erro.message}); mantendo a cotação de ${salvo.dados.data}`
+      );
+      return salvo.dados;
+    }
+    throw erro;
+  }
+}
+
+async function buscarCotacaoCepea(indicador) {
+  // Duas tentativas: com o valor antigo guardado, não vale a pena insistir
+  // muito e deixar a tela esperando.
   const html = await buscarTexto(CEPEA_URL + indicador, {
     headers: { "User-Agent": UA_NAVEGADOR },
+    tentativas: 2,
+    timeoutMs: 6000,
   });
 
   const achado = html.match(LINHA_CEPEA);
@@ -322,13 +346,19 @@ function rotaCepea(variavelEnv, padrao, nome) {
       res.json(await cotacaoCepea(indicador));
     } catch (erro) {
       console.error(`Erro ao consultar ${nome}:`, erro.message);
-      res.status(502).json({ erro: `Erro ao consultar a cotação (${nome})` });
+      // "detalhe" ajuda a diagnosticar abrindo a rota no navegador (mesma
+      // ideia do /api/dolar) — é a mensagem da API externa, nada sensível.
+      res.status(502).json({
+        erro: `Erro ao consultar a cotação (${nome})`,
+        detalhe: erro.message,
+      });
     }
   };
 }
 
 app.get("/api/soja", rotaCepea("SOJA_INDICADOR", "12", "soja"));
 app.get("/api/cafe", rotaCepea("CAFE_INDICADOR", "23", "café"));
+app.get("/api/milho", rotaCepea("MILHO_INDICADOR", "77", "milho"));
 
 // ===== SQL Server (compartilhado entre Frota e Ativos de TI) =====
 // Mesmo banco, duas rotas. O pool de conexões é criado na primeira chamada
@@ -502,7 +532,9 @@ app.get("/api/frota-localizacao", async (_req, res) => {
 // ===== Frota por líder/coordenador (SQL Server: dbo.TICKET x dbo.FROTA) =====
 // Cada veículo (PREFIXO) é contado uma vez, sob o coordenador do seu
 // ticket mais recente — mesmo critério de "atual" usado em /api/frota-localizacao.
-// O tipo/classe do veículo vem de dbo.FROTA, casado pelo PREFIXO.
+// O tipo/classe e o status do veículo vêm de dbo.FROTA, casados pelo PREFIXO.
+// O status usa exatamente a regra da página Frotas (STATUS_TILES + só bens
+// ATIVOS), para os contadores de cada coordenador baterem com aquela tela.
 app.get("/api/frota-lideres", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
@@ -510,11 +542,14 @@ app.get("/api/frota-lideres", async (_req, res) => {
 
   try {
     const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
+    const colStatus = identificadorSql(process.env.FROTA_COL_STATUS, "STATUS");
     const pool = await conectarSql();
     const { recordset } = await pool.request().query(
       `SELECT COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), 'Sem coordenador') AS coordenador,
               t.PREFIXO AS prefixo,
-              COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo') AS tipo
+              COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo') AS tipo,
+              CASE WHEN UPPER(LTRIM(RTRIM(f.[STATUS_BEM]))) = 'ATIVO'
+                   THEN f.[${colStatus}] END AS status
          FROM (
            SELECT PREFIXO, COORDENADOR,
                   ROW_NUMBER() OVER (
@@ -532,17 +567,27 @@ app.get("/api/frota-lideres", async (_req, res) => {
       const nome = String(l.coordenador ?? "").trim() || "Sem coordenador";
       let g = grupos.get(nome);
       if (!g) {
-        g = { nome, qtd: 0, tipos: new Map() };
+        g = {
+          nome,
+          qtd: 0,
+          status: { trabalhando: 0, oficina: 0, estragado: 0, semAtividade: 0 },
+          tipos: new Map(),
+        };
         grupos.set(nome, g);
       }
       g.qtd += 1;
       g.tipos.set(l.tipo, (g.tipos.get(l.tipo) || 0) + 1);
+      // Sem correspondência em dbo.FROTA (ou bem não-ativo) fica fora dos
+      // contadores de status — igual à página Frotas, que só olha bens ATIVOS.
+      const chave = STATUS_TILES[String(l.status ?? "").trim().toUpperCase()];
+      if (chave) g.status[chave] += 1;
     }
 
     const lideres = [...grupos.values()]
       .map((g) => ({
         nome: g.nome,
         qtd: g.qtd,
+        status: g.status,
         tipos: [...g.tipos]
           .map(([nome, qtd]) => ({ nome, qtd }))
           .sort((a, b) => b.qtd - a.qtd),

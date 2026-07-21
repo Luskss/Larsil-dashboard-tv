@@ -1,5 +1,6 @@
-// Página Frota por Líder: um card por coordenador, com uma grade de
-// mini-KPIs mostrando a quantidade de veículos de cada tipo sob ele.
+// Página Frota por Líder: um card por coordenador, com os contadores de
+// status (mesma regra da página Frotas) e uma grade de mini-KPIs mostrando a
+// quantidade de veículos de cada tipo sob ele.
 // Dados vêm de /api/frota-lideres via consultarFrotaLideres().
 
 import { consultarFrotaLideres } from "./downdetector.js";
@@ -27,6 +28,15 @@ function corDoTipo(nome) {
   return corPorTipo.get(nome);
 }
 
+// Contadores de status, na mesma ordem, com os mesmos rótulos e cores dos
+// KPIs da página Frotas (index.html: .kpi--trabalhando etc.).
+const STATUS = [
+  { chave: "trabalhando", rotulo: "Trabalhando" },
+  { chave: "oficina", rotulo: "Na oficina" },
+  { chave: "estragado", rotulo: "Estragado" },
+  { chave: "semAtividade", rotulo: "Sem atividade" },
+];
+
 function mostrarAviso(mensagem) {
   const aviso = document.querySelector("#lideres-aviso");
   aviso.textContent = mensagem || "";
@@ -48,6 +58,14 @@ function desenharLideres(lideres, total) {
   alvo.innerHTML = lideres.map((l, i) => `
     <div class="lider-card anima-surgir" style="--ordem: ${i};">
       <div class="lider-card__nome" title="${escapar(l.nome)}">${escapar(l.nome)}</div>
+      <div class="lider-card__status">
+        ${STATUS.map((s) => `
+          <div class="lider-status lider-status--${s.chave}">
+            <div class="lider-status__valor" data-status>0</div>
+            <div class="lider-status__nome">${s.rotulo}</div>
+          </div>
+        `).join("")}
+      </div>
       <div class="lider-card__tipos">
         ${(l.tipos || []).map((t) => `
           <div class="lider-tipo" style="--cor-tipo: ${corDoTipo(t.nome)};">
@@ -61,6 +79,10 @@ function desenharLideres(lideres, total) {
 
   const todosTipos = lideres.flatMap((l) => l.tipos || []);
   alvo.querySelectorAll("[data-qtd]").forEach((el, i) => animarNumero(el, todosTipos[i].qtd));
+
+  // Mesma ordem do HTML acima: 4 contadores por líder, um bloco após o outro.
+  const todosStatus = lideres.flatMap((l) => STATUS.map((s) => (l.status || {})[s.chave] || 0));
+  alvo.querySelectorAll("[data-status]").forEach((el, i) => animarNumero(el, todosStatus[i]));
 }
 
 async function atualizar() {

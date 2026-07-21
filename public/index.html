@@ -190,14 +190,16 @@
       margin-left: .3rem;
     }
 
-    /* Coluna das cotações à direita do relógio (linhas 1 a 3 da coluna 9, a
-       mesma altura do bloco do relógio). Só a partir de ~1100px, largura em
-       que o grid já tem 10 colunas; abaixo disso os blocos entram no fluxo
-       automático como qualquer tile. */
+    /* Coluna das cotações à direita do relógio (coluna 9, linhas 1 a 4: as
+       três primeiras acompanham a altura do relógio e a quarta encosta na
+       fileira do clima). Só a partir de ~1100px, largura em que o grid já tem
+       10 colunas; abaixo disso os blocos entram no fluxo automático como
+       qualquer tile. */
     @media (min-width: 1100px) {
       .pos--dolar { grid-column: 9 / span 2; grid-row: 1; }
       .pos--soja  { grid-column: 9 / span 2; grid-row: 2; }
       .pos--cafe  { grid-column: 9 / span 2; grid-row: 3; }
+      .pos--milho { grid-column: 9 / span 2; grid-row: 4; }
     }
 
     /* Painel de clima (estilo lovable): clima de agora em cima — temperatura
@@ -418,26 +420,66 @@
       padding: .5rem;
     }
     .lider-card {
-      flex: 0 1 clamp(360px, 30vw, 520px);
+      /* Cards largos: numa TV cabem dois lado a lado dentro do max-w-[1600px]
+         (2 x 720px + gap), e o texto interno acompanha via cqw. */
+      flex: 0 1 clamp(400px, 45vw, 720px);
       display: flex;
       flex-direction: column;
       gap: 1.4rem;
-      padding: 1.75rem;
+      padding: 2rem;
       border-radius: 1.5rem;
       background: var(--surface);
       border: 2px solid var(--border);
       container-type: inline-size;
     }
     .lider-card__nome {
-      font-size: clamp(1.35rem, 3.5cqw, 2rem);
+      font-size: clamp(1.35rem, 3.5cqw, 2.2rem);
       font-weight: 800;
       letter-spacing: .02em;
       text-transform: uppercase;
       color: var(--text);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      /* Quebra em duas linhas em vez de cortar: um nome comprido em nowrap
+         empurraria a largura mínima do card e derrubaria o segundo card
+         para a linha de baixo. */
+      overflow-wrap: anywhere;
     }
+    /* Faixa de status do coordenador: as mesmas 4 contagens da página Frotas
+       (trabalhando / oficina / estragado / sem atividade), com as mesmas
+       cores — a leitura de "como está a frota dele" vem antes dos tipos. */
+    .lider-card__status {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: .9rem;
+      padding-bottom: 1.4rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .lider-status {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: .35rem;
+      text-align: center;
+    }
+    .lider-status__valor {
+      font-size: clamp(1.75rem, 7cqw, 3.4rem);
+      font-weight: 800;
+      line-height: 1;
+      color: var(--cor-status, var(--text));
+      font-variant-numeric: tabular-nums;
+    }
+    .lider-status__nome {
+      font-size: clamp(.6rem, 2cqw, .85rem);
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .lider-status--trabalhando  { --cor-status: var(--success); }
+    .lider-status--oficina      { --cor-status: var(--alert); }
+    .lider-status--estragado    { --cor-status: var(--critical); }
+    .lider-status--semAtividade { --cor-status: var(--text); }
+
     .lider-card__tipos {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -449,7 +491,7 @@
       align-items: center;
       justify-content: center;
       gap: .4rem;
-      padding: 1.25rem .5rem;
+      padding: 1.5rem .5rem;
       border-radius: 1.1rem;
       /* Mesmo visual dos KPIs da página Frotas: fundo neutro + borda.
          Um degrau acima do card (surface-2) para destacar sobre ele. */
@@ -458,14 +500,14 @@
       text-align: center;
     }
     .lider-tipo__valor {
-      font-size: clamp(2rem, 7cqw, 3.25rem);
+      font-size: clamp(2rem, 8cqw, 4rem);
       font-weight: 800;
       line-height: 1;
       color: var(--cor-tipo, #fff);
       font-variant-numeric: tabular-nums;
     }
     .lider-tipo__nome {
-      font-size: clamp(.65rem, 2cqw, .8rem);
+      font-size: clamp(.65rem, 2.1cqw, .9rem);
       font-weight: 700;
       letter-spacing: .04em;
       text-transform: uppercase;
@@ -1044,7 +1086,7 @@
         </div>
       </div>
 
-      <!-- Café (indicador CEPEA/ESALQ): 2x1 células, fecha a coluna. -->
+      <!-- Café (indicador CEPEA/ESALQ): 2x1 células. -->
       <div class="widget cotacao bloco--w2 pos--cafe anima-surgir" data-bloco="2" style="--ordem: 5;">
         <div class="cotacao__topo">
           <span id="cafe-nome" class="cotacao__nome">Café</span>
@@ -1052,6 +1094,17 @@
         </div>
         <div class="cotacao__valor">
           <span id="cafe-valor">R$ --,--</span><span id="cafe-unidade" class="cotacao__unidade"></span>
+        </div>
+      </div>
+
+      <!-- Milho (indicador CEPEA/ESALQ): 2x1 células, fecha a coluna. -->
+      <div class="widget cotacao bloco--w2 pos--milho anima-surgir" data-bloco="2" style="--ordem: 6;">
+        <div class="cotacao__topo">
+          <span id="milho-nome" class="cotacao__nome">Milho</span>
+          <span id="milho-data" class="cotacao__extra">—</span>
+        </div>
+        <div class="cotacao__valor">
+          <span id="milho-valor">R$ --,--</span><span id="milho-unidade" class="cotacao__unidade"></span>
         </div>
       </div>
     </div>

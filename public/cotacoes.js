@@ -2,6 +2,7 @@
 //   Dólar -> /api/dolar (AwesomeAPI, USD-BRL, com a variação do dia)
 //   Soja  -> /api/soja  (indicador CEPEA/ESALQ, R$ por saca)
 //   Café  -> /api/cafe  (indicador CEPEA/ESALQ, R$ por saca)
+//   Milho -> /api/milho (indicador CEPEA/ESALQ, R$ por saca)
 // Os fetches são no servidor porque o CSP da página só permite
 // connect-src 'self'.
 
@@ -80,6 +81,7 @@ function atualizar() {
   atualizarDolar();
   atualizarCepea("soja", "/api/soja", "Soja");
   atualizarCepea("cafe", "/api/cafe", "Café");
+  atualizarCepea("milho", "/api/milho", "Milho");
 }
 
 atualizar();
