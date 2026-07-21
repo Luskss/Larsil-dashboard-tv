@@ -291,18 +291,52 @@ const LINHA_CEPEA =
   /<td>(\d{2}\/\d{2}\/\d{4})<\/td>\s*<td>\s*<span[^>]*>([^<]+)<\/span>.*?<span class="unidade">([^<]+)<\/span>.*?<td>\s*R\$\s*<span[^>]*>([\d.,]+)<\/span>/s;
 
 const cepeaCache = new Map(); // indicador -> { dados, em }
+const cepeaEmVoo = new Map(); // indicador -> busca em andamento
+
+// A Cloudflare do CEPEA corta rajada: medindo daqui, ~6 chamadas seguidas já
+// voltam 403 (e o bloqueio passa em poucos segundos). A tela pede soja, café e
+// milho de uma vez, cada uma com retry, e cada aba/reload repete o trio — junto
+// dá rajada. Por isso as chamadas saem uma de cada vez, com um respiro entre
+// elas: são três por meia hora, atrasar não custa nada.
+const CEPEA_INTERVALO_MS = 700;
+let filaCepea = Promise.resolve();
+let ultimaChamadaCepea = 0;
+
+function naFilaCepea(tarefa) {
+  const proxima = filaCepea.then(async () => {
+    const espera = CEPEA_INTERVALO_MS - (Date.now() - ultimaChamadaCepea);
+    if (espera > 0) await new Promise((r) => setTimeout(r, espera));
+    ultimaChamadaCepea = Date.now();
+    return tarefa();
+  });
+  // A fila só serve para espaçar: uma cotação que falha não pode travar as
+  // outras, então o elo seguinte ignora o erro (quem chamou é que trata).
+  filaCepea = proxima.catch(() => {});
+  return proxima;
+}
+
+// Uma busca por indicador de cada vez: com várias telas abertas o mesmo produto
+// seria pedido em paralelo, e cada pedido contaria para o limite da Cloudflare.
+function buscaUnicaCepea(indicador) {
+  const emVoo = cepeaEmVoo.get(indicador);
+  if (emVoo) return emVoo;
+
+  const busca = naFilaCepea(() => buscarCotacaoCepea(indicador));
+  cepeaEmVoo.set(indicador, busca);
+  busca.catch(() => {}).then(() => cepeaEmVoo.delete(indicador));
+  return busca;
+}
 
 async function cotacaoCepea(indicador) {
   const salvo = cepeaCache.get(indicador);
   if (salvo && Date.now() - salvo.em < CEPEA_CACHE_MS) return salvo.dados;
 
   try {
-    return await buscarCotacaoCepea(indicador);
+    return await buscaUnicaCepea(indicador);
   } catch (erro) {
-    // A Cloudflare do CEPEA devolve 403 de vez em quando (visto na prática,
-    // com a chamada seguinte voltando ao normal). Como o indicador é diário, o
-    // último valor bom continua valendo — melhor mostrá-lo do que zerar o
-    // card. A tela não mente: a data do pregão vai junto com o valor.
+    // Se ainda assim falhar (403 residual, rede do Railway), o indicador é
+    // diário: o último valor bom continua valendo, melhor mostrá-lo do que
+    // zerar o card. A tela não mente — a data do pregão vai junto com o valor.
     if (salvo) {
       console.warn(
         `CEPEA ${indicador} falhou (${erro.message}); mantendo a cotação de ${salvo.dados.data}`
