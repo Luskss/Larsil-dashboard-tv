@@ -279,6 +279,14 @@ app.get("/api/dolar", async (_req, res) => {
 //   café  -> 23 "Café Arábica" (24 = "Café Robusta")
 //   milho -> 77 "Milho" (indicador ESALQ/BM&FBovespa, Campinas)
 // Os indicadores são diários (só dias úteis), por isso o cache longo.
+//
+// O widget só responde de rede residencial: a Cloudflare do CEPEA barra IP de
+// datacenter, então no Railway a chamada volta 403 na hora (medido: mesma URL,
+// mesmo minuto, 200 de casa e 403 da nuvem — não é cabeçalho nem User-Agent).
+// Por isso cada produto tem um espelho no Notícias Agrícolas, que republica o
+// mesmo indicador do CEPEA e é alcançável de qualquer lugar. O CEPEA continua
+// sendo a primeira tentativa: quando dá certo, é a fonte oficial; quando não,
+// o 403 chega em milissegundos e o espelho assume sem atrasar a tela.
 const CEPEA_URL = "https://www.cepea.org.br/br/widgetproduto.js.php?id_indicador[]=";
 const CEPEA_CACHE_MS = 30 * 60 * 1000;
 // Sem User-Agent de navegador a Cloudflare do CEPEA devolve 403.
@@ -289,6 +297,38 @@ const UA_NAVEGADOR =
 // Linha da tabela do widget: data | produto + unidade | R$ valor.
 const LINHA_CEPEA =
   /<td>(\d{2}\/\d{2}\/\d{4})<\/td>\s*<td>\s*<span[^>]*>([^<]+)<\/span>.*?<span class="unidade">([^<]+)<\/span>.*?<td>\s*R\$\s*<span[^>]*>([\d.,]+)<\/span>/s;
+
+// Página do espelho: a primeira tabela é a do indicador, e a primeira linha
+// dela é o pregão mais recente (data | valor | variação).
+const ESPELHO_URL = "https://www.noticiasagricolas.com.br/cotacoes/";
+const LINHA_ESPELHO =
+  /<table class="cot-fisicas">.*?<tbody>\s*<tr>\s*<td>\s*(\d{2}\/\d{2}\/\d{4})\s*<\/td>\s*<td>\s*([\d.,]+)\s*<\/td>/s;
+
+// Cada produto: id do indicador no CEPEA (trocável pelo .env), caminho do
+// espelho e o rótulo do card. O nome vem daqui, e não do título da página do
+// espelho ("Indicador da Soja Cepea/Esalq - Paraná"), que não cabe no bloco.
+const PRODUTOS = {
+  soja: {
+    variavelEnv: "SOJA_INDICADOR",
+    indicador: "12",
+    espelho: "soja/indicador-cepea-esalq-soja-parana",
+    produto: "Soja - PR",
+  },
+  cafe: {
+    variavelEnv: "CAFE_INDICADOR",
+    indicador: "23",
+    espelho: "cafe/indicador-cepea-esalq-cafe-arabica",
+    produto: "Café Arábica",
+  },
+  milho: {
+    variavelEnv: "MILHO_INDICADOR",
+    indicador: "77",
+    espelho: "milho/indicador-cepea-esalq-milho",
+    produto: "Milho",
+  },
+};
+// Os três indicadores são cotados em saca de 60kg; o front encurta para "/sc".
+const UNIDADE_SACA = "sc de 60kg";
 
 const cepeaCache = new Map(); // indicador -> { dados, em }
 const cepeaEmVoo = new Map(); // indicador -> busca em andamento
@@ -317,29 +357,29 @@ function naFilaCepea(tarefa) {
 
 // Uma busca por indicador de cada vez: com várias telas abertas o mesmo produto
 // seria pedido em paralelo, e cada pedido contaria para o limite da Cloudflare.
-function buscaUnicaCepea(indicador) {
+function buscaUnicaCepea(cfg, indicador) {
   const emVoo = cepeaEmVoo.get(indicador);
   if (emVoo) return emVoo;
 
-  const busca = naFilaCepea(() => buscarCotacaoCepea(indicador));
+  const busca = naFilaCepea(() => buscarCotacao(cfg, indicador));
   cepeaEmVoo.set(indicador, busca);
   busca.catch(() => {}).then(() => cepeaEmVoo.delete(indicador));
   return busca;
 }
 
-async function cotacaoCepea(indicador) {
+async function cotacaoCepea(cfg, indicador) {
   const salvo = cepeaCache.get(indicador);
   if (salvo && Date.now() - salvo.em < CEPEA_CACHE_MS) return salvo.dados;
 
   try {
-    return await buscaUnicaCepea(indicador);
+    return await buscaUnicaCepea(cfg, indicador);
   } catch (erro) {
-    // Se ainda assim falhar (403 residual, rede do Railway), o indicador é
-    // diário: o último valor bom continua valendo, melhor mostrá-lo do que
-    // zerar o card. A tela não mente — a data do pregão vai junto com o valor.
+    // Se as duas fontes falharem, o indicador é diário: o último valor bom
+    // continua valendo, melhor mostrá-lo do que zerar o card. A tela não
+    // mente — a data do pregão vai junto com o valor.
     if (salvo) {
       console.warn(
-        `CEPEA ${indicador} falhou (${erro.message}); mantendo a cotação de ${salvo.dados.data}`
+        `Cotação ${indicador} falhou (${erro.message}); mantendo a de ${salvo.dados.data}`
       );
       return salvo.dados;
     }
@@ -347,12 +387,37 @@ async function cotacaoCepea(indicador) {
   }
 }
 
+// Fonte oficial primeiro, espelho como plano B.
+async function buscarCotacao(cfg, indicador) {
+  let dados;
+  try {
+    dados = await buscarCotacaoCepea(indicador);
+  } catch (erro) {
+    // Só faz sentido espelhar o indicador padrão: se o .env aponta para outra
+    // série (ex.: soja 92, do porto de Paranaguá), a página do espelho é de um
+    // indicador diferente — melhor falhar do que mostrar o número errado.
+    if (indicador !== cfg.indicador) throw erro;
+    console.warn(`CEPEA ${indicador} falhou (${erro.message}); usando o espelho`);
+    dados = await buscarCotacaoEspelho(cfg);
+  }
+
+  cepeaCache.set(indicador, { dados, em: Date.now() });
+  return dados;
+}
+
+// "1.234,56" (pt-BR) -> 1234.56
+function valorBR(texto) {
+  const valor = Number(texto.replace(/\./g, "").replace(",", "."));
+  if (!Number.isFinite(valor)) throw new Error(`Valor ilegível: ${texto}`);
+  return valor;
+}
+
 async function buscarCotacaoCepea(indicador) {
-  // Duas tentativas: com o valor antigo guardado, não vale a pena insistir
-  // muito e deixar a tela esperando.
+  // Uma tentativa só: com espelho e valor antigo guardados, insistir aqui só
+  // atrasaria a tela (e, no datacenter, o 403 não muda tentando de novo).
   const html = await buscarTexto(CEPEA_URL + indicador, {
     headers: { "User-Agent": UA_NAVEGADOR },
-    tentativas: 2,
+    tentativas: 1,
     timeoutMs: 6000,
   });
 
@@ -360,26 +425,37 @@ async function buscarCotacaoCepea(indicador) {
   if (!achado) throw new Error("Widget do CEPEA veio sem a linha da cotação");
   const [, data, produto, unidade, valor] = achado;
 
-  const dados = {
-    // Nomes curtos: o card do dashboard é pequeno (bloco 2x1).
+  return {
+    // Nomes curtos: o card do dashboard é pequeno (bloco 3x1).
     produto: produto.trim().slice(0, 40),
     unidade: unidade.trim().slice(0, 20),
-    // "1.234,56" (pt-BR) -> 1234.56
-    valor: Number(valor.replace(/\./g, "").replace(",", ".")),
+    valor: valorBR(valor),
     data, // dd/mm/aaaa do pregão — o indicador não sai fim de semana
   };
-  if (!Number.isFinite(dados.valor)) throw new Error(`Valor ilegível: ${valor}`);
+}
 
-  cepeaCache.set(indicador, { dados, em: Date.now() });
-  return dados;
+async function buscarCotacaoEspelho(cfg) {
+  const html = await buscarTexto(ESPELHO_URL + cfg.espelho, {
+    headers: { "User-Agent": UA_NAVEGADOR },
+    tentativas: 2,
+    timeoutMs: 8000,
+  });
+
+  const achado = html.match(LINHA_ESPELHO);
+  if (!achado) throw new Error("Espelho veio sem a tabela do indicador");
+  const [, data, valor] = achado;
+
+  return { produto: cfg.produto, unidade: UNIDADE_SACA, valor: valorBR(valor), data };
 }
 
 // Monta a rota de um produto: id do .env (só dígitos) ou o padrão.
-function rotaCepea(variavelEnv, padrao, nome) {
+function rotaCepea(chave, nome) {
+  const cfg = PRODUTOS[chave];
   return async (_req, res) => {
     try {
-      const indicador = String(process.env[variavelEnv] || padrao).replace(/\D/g, "") || padrao;
-      res.json(await cotacaoCepea(indicador));
+      const indicador =
+        String(process.env[cfg.variavelEnv] || cfg.indicador).replace(/\D/g, "") || cfg.indicador;
+      res.json(await cotacaoCepea(cfg, indicador));
     } catch (erro) {
       console.error(`Erro ao consultar ${nome}:`, erro.message);
       // "detalhe" ajuda a diagnosticar abrindo a rota no navegador (mesma
@@ -392,9 +468,9 @@ function rotaCepea(variavelEnv, padrao, nome) {
   };
 }
 
-app.get("/api/soja", rotaCepea("SOJA_INDICADOR", "12", "soja"));
-app.get("/api/cafe", rotaCepea("CAFE_INDICADOR", "23", "café"));
-app.get("/api/milho", rotaCepea("MILHO_INDICADOR", "77", "milho"));
+app.get("/api/soja", rotaCepea("soja", "soja"));
+app.get("/api/cafe", rotaCepea("cafe", "café"));
+app.get("/api/milho", rotaCepea("milho", "milho"));
 
 // ===== Selic (meta do Copom — série 432 do SGS/Banco Central) =====
 // A meta só muda nas reuniões do Copom (a cada ~45 dias), por isso o cache
