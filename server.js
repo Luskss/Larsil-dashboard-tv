@@ -6,7 +6,7 @@
 //   GET  /api/config/:chave     -> valor de uma config (ex.: cidade)
 //   POST /api/config/:chave     -> salva config (body: { valor })
 //   GET  /api/clima?cidade=...   -> clima atual via Open-Meteo
-//   GET  /api/dolar              -> cotação do dólar (USD-BRL) via AwesomeAPI
+//   GET  /api/dolar              -> dólar (USD-BRL): AwesomeAPI, com PTAX do BC de reserva
 //   GET  /api/soja               -> indicador da soja (R$/saca) via CEPEA/ESALQ
 //   GET  /api/cafe               -> indicador do café (R$/saca) via CEPEA/ESALQ
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
@@ -110,13 +110,15 @@ app.post("/api/config/:chave", async (req, res) => {
 
 // ===== Consulta a APIs externas (clima, dólar, soja) =====
 // Busca com timeout e retry: no Railway o egress para APIs externas às vezes
-// falha de forma intermitente (rede/DNS do datacenter). Abortamos em 8s para
-// não pendurar a resposta e tentamos de novo antes de desistir.
-async function buscarComRetry(url, { tentativas = 3, ...opcoes } = {}) {
+// falha de forma intermitente (rede/DNS do datacenter). Abortamos por padrão
+// em 8s para não pendurar a resposta e tentamos de novo antes de desistir.
+// Quem tem plano B (o dólar) usa menos tentativas e timeout menor, para cair
+// rápido na outra fonte em vez de deixar a tela esperando.
+async function buscarComRetry(url, { tentativas = 3, timeoutMs = 8000, ...opcoes } = {}) {
   let ultimoErro;
   for (let i = 0; i < tentativas; i++) {
     try {
-      const resp = await fetch(url, { ...opcoes, signal: AbortSignal.timeout(8000) });
+      const resp = await fetch(url, { ...opcoes, signal: AbortSignal.timeout(timeoutMs) });
       if (!resp.ok) throw new Error(`A API respondeu ${resp.status}`);
       return resp;
     } catch (erro) {
@@ -174,37 +176,96 @@ app.get("/api/clima", async (req, res) => {
   }
 });
 
-// ===== Dólar (AwesomeAPI: cotação USD -> BRL, sem chave) =====
+// ===== Dólar (USD -> BRL, duas fontes) =====
+// 1ª opção, AwesomeAPI: cotação de mercado do momento, já com a variação do
+//    dia. Fica atrás da Cloudflare, que barra IP de datacenter — pode falhar
+//    no Railway mesmo funcionando na máquina local (foi o que derrubou o
+//    Downdetector, ver o comentário lá embaixo).
+// 2ª opção, PTAX do Banco Central: oficial, sem Cloudflare, publicada por
+//    volta das 13h de cada dia útil. A variação sai da diferença para o dia
+//    útil anterior.
 // O widget do dashboard atualiza a cada 5 min, mas várias telas/recarregamentos
 // bateriam aqui ao mesmo tempo — o cache curto segura isso sem envelhecer a
 // cotação (o mercado de câmbio se move em segundos, não em minutos).
 const DOLAR_URL = "https://economia.awesomeapi.com.br/json/last/USD-BRL";
+const PTAX_URL =
+  "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/" +
+  "CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)";
 const DOLAR_CACHE_MS = 60 * 1000;
 let dolarCache = null; // { dados, em }
+
+async function dolarAwesome() {
+  // Uma tentativa só: se a Cloudflare barrar, é melhor cair logo no plano B.
+  const cotacao = (await buscarJson(DOLAR_URL, { tentativas: 1, timeoutMs: 5000 })).USDBRL;
+  if (!cotacao?.bid) throw new Error("Resposta sem cotação");
+  return {
+    valor: Number(cotacao.bid),
+    // pctChange = variação percentual do dia (negativa quando o dólar cai).
+    variacao: Number(cotacao.pctChange),
+    maxima: Number(cotacao.high),
+    minima: Number(cotacao.low),
+    atualizadoEm: cotacao.create_date || null,
+    fonte: "AwesomeAPI",
+  };
+}
+
+// A API do BC espera as datas em MM-DD-AAAA (formato americano).
+function dataPtax(data) {
+  const mes = String(data.getMonth() + 1).padStart(2, "0");
+  const dia = String(data.getDate()).padStart(2, "0");
+  return `${mes}-${dia}-${data.getFullYear()}`;
+}
+
+async function dolarPtax() {
+  // 12 dias para trás garantem dois pregões mesmo com feriado prolongado.
+  const hoje = new Date();
+  const inicio = new Date(hoje.getTime() - 12 * 24 * 60 * 60 * 1000);
+  const url =
+    `${PTAX_URL}?@dataInicial='${dataPtax(inicio)}'&@dataFinalCotacao='${dataPtax(hoje)}'` +
+    "&$format=json&$select=cotacaoVenda,dataHoraCotacao";
+
+  const linhas = (await buscarJson(url, { tentativas: 2, timeoutMs: 5000 })).value || [];
+  if (linhas.length === 0) throw new Error("PTAX sem cotações no período");
+
+  // A lista vem em ordem cronológica: a última é a cotação mais recente.
+  const ultima = linhas.at(-1);
+  const anterior = linhas.at(-2);
+  const valor = Number(ultima.cotacaoVenda);
+  if (!Number.isFinite(valor)) throw new Error("PTAX com valor ilegível");
+
+  const base = Number(anterior?.cotacaoVenda);
+  return {
+    valor,
+    variacao: Number.isFinite(base) && base > 0 ? ((valor - base) / base) * 100 : 0,
+    maxima: null,
+    minima: null,
+    atualizadoEm: ultima.dataHoraCotacao || null,
+    fonte: "PTAX/BCB",
+  };
+}
 
 app.get("/api/dolar", async (_req, res) => {
   if (dolarCache && Date.now() - dolarCache.em < DOLAR_CACHE_MS) {
     return res.json(dolarCache.dados);
   }
 
-  try {
-    const cotacao = (await buscarJson(DOLAR_URL)).USDBRL;
-    if (!cotacao?.bid) throw new Error("Resposta sem cotação");
-
-    const dados = {
-      valor: Number(cotacao.bid),
-      // pctChange = variação percentual do dia (negativa quando o dólar cai).
-      variacao: Number(cotacao.pctChange),
-      maxima: Number(cotacao.high),
-      minima: Number(cotacao.low),
-      atualizadoEm: cotacao.create_date || null,
-    };
-    dolarCache = { dados, em: Date.now() };
-    res.json(dados);
-  } catch (erro) {
-    console.error("Erro ao consultar o dólar:", erro.message);
-    res.status(502).json({ erro: "Erro ao consultar a cotação do dólar" });
+  const falhas = [];
+  for (const fonte of [dolarAwesome, dolarPtax]) {
+    try {
+      const dados = await fonte();
+      dolarCache = { dados, em: Date.now() };
+      return res.json(dados);
+    } catch (erro) {
+      falhas.push(`${fonte.name}: ${erro.message}`);
+    }
   }
+
+  // "detalhe" viaja junto para dar para diagnosticar abrindo /api/dolar no
+  // navegador, sem precisar do log do Railway (é a mensagem da API externa,
+  // não tem nada de sensível).
+  const detalhe = falhas.join(" | ");
+  console.error("Erro ao consultar o dólar:", detalhe);
+  res.status(502).json({ erro: "Erro ao consultar a cotação do dólar", detalhe });
 });
 
 // ===== Commodities (indicadores CEPEA/ESALQ) =====

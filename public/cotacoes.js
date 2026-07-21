@@ -15,7 +15,11 @@ const FORMATO_REAL = new Intl.NumberFormat("pt-BR", {
 async function buscar(rota) {
   const resp = await fetch(rota);
   const dados = await resp.json();
-  if (!resp.ok) throw new Error(dados.erro || `Falha em ${rota}`);
+  if (!resp.ok) {
+    // "detalhe" é o motivo cru vindo da API externa — vale no console para
+    // diagnosticar sem precisar do log do servidor.
+    throw new Error([dados.erro || `Falha em ${rota}`, dados.detalhe].filter(Boolean).join(" — "));
+  }
   return dados;
 }
 
