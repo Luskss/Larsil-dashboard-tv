@@ -17,6 +17,7 @@
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
 //   GET  /api/frota-lideres      -> qtd de veículos por coordenador (dbo.TICKET)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
+//   GET  /api/colaboradores      -> total do quadro e contagem por classe (SQL Server, dbo.COLABORADORES)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 
@@ -33,6 +34,10 @@ try { process.loadEnvFile(); } catch { /* sem .env, segue com o ambiente */ }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
+
+// Não anuncia "Express" em toda resposta — versão de framework só ajuda quem
+// está procurando um alvo com CVE conhecida.
+app.disable("x-powered-by");
 
 // ===== Cabeçalhos de segurança (em toda resposta) =====
 // CSP: scripts só do próprio site (Tailwind é self-hosted em /vendor, e os
@@ -61,41 +66,176 @@ app.use((_req, res, next) => {
   if (process.env.NODE_ENV === "production") {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
+  // Resposta de API é dado de sessão: não pode ficar em cache de navegador nem
+  // de proxy no caminho.
+  if (_req.path.startsWith("/api/") || _req.path === "/login") {
+    res.setHeader("Cache-Control", "no-store");
+  }
   next();
 });
 
-app.use(express.json({ limit: "8mb" })); // logos em base64 podem pesar
+// ===== Conferência de origem (defesa extra contra CSRF) =====
+// O cookie já é SameSite=strict e o corpo é JSON (formulário de outro site não
+// consegue mandar application/json), então o CSRF já estava barrado por dois
+// lados. Este é o terceiro: se o navegador declarou uma origem, ela tem que ser
+// a nossa. Sem Origin (curl, healthcheck) segue o baile — quem não é navegador
+// não carrega o cookie da vítima.
+app.use((req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+
+  const origem = req.headers.origin;
+  if (!origem) return next();
+
+  let host;
+  try {
+    host = new URL(origem).host;
+  } catch {
+    return res.status(403).json({ erro: "Origem inválida" });
+  }
+  if (host !== req.headers.host) {
+    console.warn(`Requisição bloqueada: origem ${origem} != host ${req.headers.host}`);
+    return res.status(403).json({ erro: "Origem não permitida" });
+  }
+  next();
+});
+
+// ===== Corpo JSON =====
+// O parser roda antes do exigirSessao, então o limite geral é curto: sem isso,
+// qualquer um sem login faria o servidor bufferizar 8 MB por requisição. Só a
+// rota das logos (base64, pesado) aceita mais, e lá o parser é montado depois
+// da checagem de sessão.
+const ROTA_LOGOS = "/api/servicos";
+app.use((req, res, next) =>
+  req.path === ROTA_LOGOS ? next() : express.json({ limit: "64kb" })(req, res, next)
+);
 
 // ===== Login (usuário/senha único, ver auth.js) =====
-app.post("/login", (req, res) => {
+// A senha é uma só e vale por tudo (frota, helpdesk, tokens do Railway), então
+// tentativa ilimitada é o elo mais fraco do sistema. Duas travas, em memória
+// mesmo — o processo é único e reiniciar limpar o contador não atrapalha:
+//   1. por IP: JANELA_MS de castigo depois de MAX_FALHAS erradas;
+//   2. teto de logins simultâneos: cada tentativa custa um scrypt, e uma rajada
+//      de derivações em paralelo come a CPU inteira mesmo sendo assíncrona.
+const MAX_FALHAS = 10;
+const JANELA_MS = 15 * 60 * 1000;
+const MAX_LOGINS_SIMULTANEOS = 5;
+
+const falhasPorIp = new Map(); // ip -> { qtd, ate }
+let loginsEmVoo = 0;
+
+// Sem limpeza a Map cresce sem parar; um passe a cada janela basta.
+setInterval(() => {
+  const agora = Date.now();
+  for (const [ip, reg] of falhasPorIp) if (agora > reg.ate) falhasPorIp.delete(ip);
+}, JANELA_MS).unref();
+
+function bloqueado(ip) {
+  const reg = falhasPorIp.get(ip);
+  if (!reg) return 0;
+  if (Date.now() > reg.ate) {
+    falhasPorIp.delete(ip);
+    return 0;
+  }
+  return reg.qtd >= MAX_FALHAS ? Math.ceil((reg.ate - Date.now()) / 1000) : 0;
+}
+
+function registrarFalha(ip) {
+  const reg = falhasPorIp.get(ip) || { qtd: 0, ate: 0 };
+  reg.qtd += 1;
+  reg.ate = Date.now() + JANELA_MS;
+  falhasPorIp.set(ip, reg);
+}
+
+app.post("/login", async (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "desconhecido";
+
+  const espera = bloqueado(ip);
+  if (espera > 0) {
+    res.setHeader("Retry-After", String(espera));
+    return res.status(429).json({ erro: "Tentativas demais. Aguarde alguns minutos." });
+  }
+
+  if (loginsEmVoo >= MAX_LOGINS_SIMULTANEOS) {
+    res.setHeader("Retry-After", "5");
+    return res.status(429).json({ erro: "Servidor ocupado, tente de novo em instantes" });
+  }
+
   const { usuario, senha } = req.body || {};
-  if (!validarLogin(usuario, senha)) {
+  loginsEmVoo += 1;
+  let ok;
+  try {
+    ok = await validarLogin(usuario, senha);
+  } finally {
+    loginsEmVoo -= 1;
+  }
+
+  if (!ok) {
+    registrarFalha(ip);
+    console.warn(`Login negado (ip ${ip})`);
     return res.status(401).json({ erro: "Usuário ou senha inválidos" });
   }
-  iniciarSessao(res, usuario);
+
+  falhasPorIp.delete(ip);
+  iniciarSessao(req, res, usuario);
   res.json({ ok: true });
 });
 
-app.post("/logout", (_req, res) => {
-  encerrarSessao(res);
+app.post("/logout", (req, res) => {
+  encerrarSessao(req, res);
   res.json({ ok: true });
 });
 
 // A partir daqui, tudo exige sessão válida (libera só /login e /login.html).
 app.use(exigirSessao);
 
+// Logos em base64: limite maior, mas só depois da sessão conferida.
+app.use(ROTA_LOGOS, express.json({ limit: "8mb" }));
+
 // ===== Serviços =====
 app.get("/api/servicos", async (_req, res) => {
   res.json(await store.listarServicos());
 });
 
+// A logo chega como data URI vinda do navegador. Aceita só imagem de bitmap:
+// SVG é XML e carrega <script>/onload, então viraria XSS armazenado no dia em
+// que alguma tela renderizar a logo fora de um <img>.
+const LOGO_PERMITIDA = /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const LOGO_MAX = 1_400_000; // ~1 MB de arquivo vira ~1,37 MB em base64
+const MAX_SERVICOS = 50;
+const TEXTO_MAX = 200;
+
+function limparServico(bruto) {
+  const nome = String(bruto?.nome ?? "").trim().slice(0, TEXTO_MAX);
+  const slug = String(bruto?.slug ?? "").trim().slice(0, TEXTO_MAX);
+  if (!nome || !slug) return null;
+
+  const logo = typeof bruto?.logo === "string" ? bruto.logo : null;
+  const logoOk = logo && logo.length <= LOGO_MAX && LOGO_PERMITIDA.test(logo);
+  // Campo a campo, em vez de repassar o objeto: assim nada além de
+  // nome/slug/logo entra no data.json, por mais que o cliente mande.
+  return { nome, slug, logo: logoOk ? logo : null };
+}
+
 app.post("/api/servicos", async (req, res) => {
-  await store.salvarServicos(req.body?.servicos ?? []);
+  const recebidos = Array.isArray(req.body?.servicos) ? req.body.servicos : [];
+  if (recebidos.length > MAX_SERVICOS) {
+    return res.status(400).json({ erro: `Máximo de ${MAX_SERVICOS} serviços` });
+  }
+  await store.salvarServicos(recebidos.map(limparServico).filter(Boolean));
   res.json({ ok: true });
 });
 
 // ===== Config chave-valor =====
+// Lista branca: a chave vira nome de propriedade no data.json, e chave livre
+// deixaria qualquer um encher o arquivo (ou escrever "__proto__"). Hoje só a
+// cidade do clima passa por aqui; o resto das preferências é localStorage.
+const CONFIGS_PERMITIDAS = new Set(["cidade"]);
+const CONFIG_VALOR_MAX = 200;
+
 app.get("/api/config/:chave", async (req, res) => {
+  if (!CONFIGS_PERMITIDAS.has(req.params.chave)) {
+    return res.status(404).json({ erro: "Configuração desconhecida" });
+  }
   let valor = await store.getConfig(req.params.chave);
   // Cidade do clima: se ninguém salvou pela tela de Gestão, vale a do
   // ambiente (CIDADE_CLIMA) — útil no Railway, onde o data.json se perde
@@ -107,7 +247,13 @@ app.get("/api/config/:chave", async (req, res) => {
 });
 
 app.post("/api/config/:chave", async (req, res) => {
-  await store.setConfig(req.params.chave, req.body?.valor ?? "");
+  if (!CONFIGS_PERMITIDAS.has(req.params.chave)) {
+    return res.status(404).json({ erro: "Configuração desconhecida" });
+  }
+  // Só string: o valor volta para o front e é gravado no JSON — objeto aninhado
+  // aqui não tem uso e só abriria espaço para lixo no arquivo.
+  const valor = String(req.body?.valor ?? "").slice(0, CONFIG_VALOR_MAX);
+  await store.setConfig(req.params.chave, valor);
   res.json({ ok: true });
 });
 
@@ -263,12 +409,10 @@ app.get("/api/dolar", async (_req, res) => {
     }
   }
 
-  // "detalhe" viaja junto para dar para diagnosticar abrindo /api/dolar no
-  // navegador, sem precisar do log do Railway (é a mensagem da API externa,
-  // não tem nada de sensível).
-  const detalhe = falhas.join(" | ");
-  console.error("Erro ao consultar o dólar:", detalhe);
-  res.status(502).json({ erro: "Erro ao consultar a cotação do dólar", detalhe });
+  // O detalhe fica só no log: a mensagem da falha carrega URL, host e às vezes
+  // erro de DNS/TLS da infra — diagnóstico é no log do Railway, não na resposta.
+  console.error("Erro ao consultar o dólar:", falhas.join(" | "));
+  res.status(502).json({ erro: "Erro ao consultar a cotação do dólar" });
 });
 
 // ===== Commodities (indicadores CEPEA/ESALQ) =====
@@ -457,13 +601,9 @@ function rotaCepea(chave, nome) {
         String(process.env[cfg.variavelEnv] || cfg.indicador).replace(/\D/g, "") || cfg.indicador;
       res.json(await cotacaoCepea(cfg, indicador));
     } catch (erro) {
+      // Detalhe só no log (ver /api/dolar).
       console.error(`Erro ao consultar ${nome}:`, erro.message);
-      // "detalhe" ajuda a diagnosticar abrindo a rota no navegador (mesma
-      // ideia do /api/dolar) — é a mensagem da API externa, nada sensível.
-      res.status(502).json({
-        erro: `Erro ao consultar a cotação (${nome})`,
-        detalhe: erro.message,
-      });
+      res.status(502).json({ erro: `Erro ao consultar a cotação (${nome})` });
     }
   };
 }
@@ -509,7 +649,7 @@ app.get("/api/selic", async (_req, res) => {
       return res.json(selicCache.dados);
     }
     console.error("Erro ao consultar a Selic:", erro.message);
-    res.status(502).json({ erro: "Erro ao consultar a Selic", detalhe: erro.message });
+    res.status(502).json({ erro: "Erro ao consultar a Selic" });
   }
 });
 
@@ -571,7 +711,7 @@ app.get("/api/igpm", async (_req, res) => {
       return res.json(igpmCache.dados);
     }
     console.error("Erro ao consultar o IGP-M:", erro.message);
-    res.status(502).json({ erro: "Erro ao consultar o IGP-M", detalhe: erro.message });
+    res.status(502).json({ erro: "Erro ao consultar o IGP-M" });
   }
 });
 
@@ -589,8 +729,14 @@ function conectarSql() {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       options: {
-        encrypt: process.env.DB_ENCRYPT === "true",
-        trustServerCertificate: process.env.DB_TRUST_CERT !== "false",
+        // Padrões fechados: sem as variáveis definidas, a conexão vai
+        // criptografada e exigindo certificado válido. Antes era o contrário
+        // (encrypt caía para false, trustServerCertificate para true), então um
+        // deploy que esquecesse o .env mandava usuário, senha e os dados da
+        // frota em texto claro — e aceitava qualquer certificado no caminho.
+        // Para um SQL Server com certificado self-signed, DB_TRUST_CERT=true.
+        encrypt: process.env.DB_ENCRYPT !== "false",
+        trustServerCertificate: process.env.DB_TRUST_CERT === "true",
       },
     });
     poolSql.catch(() => { poolSql = null; });
@@ -847,6 +993,47 @@ app.get("/api/ativos-ti", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar ativos de TI:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco de ativos de TI" });
+  }
+});
+
+// ===== Colaboradores (SQL Server) =====
+// Efetivo de dbo.COLABORADORES: o total do quadro e a contagem por CLASSE (a
+// sigla do cargo: TRF, ADM, OPF...). A tabela guarda só quem está no quadro
+// hoje — quem sai vai para COLABORADORES_HISTORICO — então COUNT(*) já é o
+// efetivo atual, sem filtro de situação.
+//
+// Vão todas as classes (hoje 10), da maior para a menor; o front desenha um
+// card por classe.
+
+// Sem espaço nas pontas e em caixa alta, para "ADM " e "adm" não virarem duas
+// linhas na contagem. Vai no SELECT e no GROUP BY, por isso o helper em vez
+// do texto repetido.
+const CLASSE_NORMALIZADA = `UPPER(LTRIM(RTRIM(ISNULL([CLASSE], ''))))`;
+
+app.get("/api/colaboradores", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    const pool = await conectarSql();
+    const consultaTotal = await pool.request().query(
+      `SELECT COUNT(*) AS total FROM dbo.COLABORADORES`
+    );
+    const consultaClasses = await pool.request().query(
+      `SELECT ${CLASSE_NORMALIZADA} AS nome, COUNT(*) AS qtd
+         FROM dbo.COLABORADORES
+        GROUP BY ${CLASSE_NORMALIZADA}
+        ORDER BY COUNT(*) DESC`
+    );
+
+    res.json({
+      total: consultaTotal.recordset[0].total,
+      classes: consultaClasses.recordset.map((l) => ({ nome: l.nome || "Sem classe", qtd: l.qtd })),
+    });
+  } catch (erro) {
+    console.error("Erro ao consultar colaboradores:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar o banco de colaboradores" });
   }
 });
 
@@ -1110,6 +1297,24 @@ app.post("/api/railway-tokens", async (req, res) => {
 
 // ===== Estáticos (front-end) =====
 app.use(express.static(join(__dirname, "public")));
+
+// ===== Tratador de erros (último middleware) =====
+// Sem ele o Express usa o handler padrão, que devolve o stack trace no corpo
+// da resposta quando NODE_ENV não é "production" — caminho absoluto do projeto,
+// versão de cada pacote em node_modules, e sem exigir login. O detalhe fica no
+// log; para quem chamou vai só o código e uma frase.
+// eslint-disable-next-line no-unused-vars -- o Express só reconhece o handler de erro com 4 argumentos
+app.use((erro, req, res, _next) => {
+  const status = erro.status || erro.statusCode || 500;
+  console.error(`Erro em ${req.method} ${req.path}:`, erro.message);
+
+  if (res.headersSent) return;
+  if (status === 413) return res.status(413).json({ erro: "Conteúdo grande demais" });
+  if (status === 400 && erro.type === "entity.parse.failed") {
+    return res.status(400).json({ erro: "JSON inválido" });
+  }
+  res.status(status >= 400 && status < 500 ? status : 500).json({ erro: "Erro interno" });
+});
 
 const PORTA = process.env.PORT || 3000;
 app.listen(PORTA, () => {

@@ -6,10 +6,15 @@
 //   DASHBOARD_PASS_HASH  -> hash da senha, gerado com `node auth.js minha-senha`
 //   SESSION_SECRET       -> string aleatória longa, só para assinar o cookie
 //
-// O cookie guarda só "usuario:expiraEm:assinatura" — nada de sessão em banco.
+// O cookie guarda só "usuario:versao:expiraEm:assinatura" — nada de sessão em
+// banco. A "versao" é um resumo do DASHBOARD_PASS_HASH: trocar a senha muda a
+// versão e derruba todas as sessões abertas (ver versaoSenha).
 
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { randomBytes, scrypt, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+
+const scryptAsync = promisify(scrypt);
 
 const COOKIE = "dashboard_sessao";
 const DURACAO_MS = 12 * 60 * 60 * 1000; // 12 horas
@@ -27,12 +32,21 @@ export function gerarHash(senha) {
   return `${sal}:${derivado}`;
 }
 
-function senhaConfere(senha, hash) {
+// Assíncrono de propósito: scryptSync trava o event loop por ~80ms, e o /login
+// é aberto a quem não está logado — em rajada, isso sozinho derruba o
+// dashboard. A versão async joga a derivação na thread pool.
+async function senhaConfere(senha, hash) {
   const [sal, derivadoHex] = String(hash || "").split(":");
   if (!sal || !derivadoHex) return false;
-  const derivado = scryptSync(senha, sal, 64);
+  const derivado = await scryptAsync(senha, sal, 64);
   const esperado = Buffer.from(derivadoHex, "hex");
   return derivado.length === esperado.length && timingSafeEqual(derivado, esperado);
+}
+
+function comparaConstante(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 }
 
 // ===== Cookie de sessão (HMAC — sem estado no servidor) =====
@@ -40,47 +54,80 @@ function assinar(texto) {
   return createHmac("sha256", segredo()).update(texto).digest("hex");
 }
 
+// Resumo curto da senha vigente, embutido no cookie. Como o servidor não
+// guarda sessões, é o que permite revogá-las: ao trocar DASHBOARD_PASS_HASH a
+// versão muda e todo cookie emitido antes deixa de validar.
+function versaoSenha() {
+  return assinar(`versao:${process.env.DASHBOARD_PASS_HASH || ""}`).slice(0, 16);
+}
+
+// O usuário vai em base64url para não colidir com o ":" que separa os campos
+// (DASHBOARD_USER pode conter qualquer coisa).
 function criarCookie(usuario) {
   const expiraEm = Date.now() + DURACAO_MS;
-  const carga = `${usuario}:${expiraEm}`;
+  const carga = `${Buffer.from(String(usuario)).toString("base64url")}:${versaoSenha()}:${expiraEm}`;
   return `${carga}:${assinar(carga)}`;
 }
 
 function lerCookie(valor) {
   if (!valor) return null;
   const partes = String(valor).split(":");
-  if (partes.length !== 3) return null;
-  const [usuario, expiraEmStr, assinatura] = partes;
-  const carga = `${usuario}:${expiraEmStr}`;
+  if (partes.length !== 4) return null;
+  const [usuarioB64, versao, expiraEmStr, assinatura] = partes;
+
+  const carga = `${usuarioB64}:${versao}:${expiraEmStr}`;
   const esperada = Buffer.from(assinar(carga));
   const recebida = Buffer.from(assinatura);
   if (esperada.length !== recebida.length || !timingSafeEqual(esperada, recebida)) return null;
+
+  // Senha trocada depois que o cookie foi emitido => sessão morta.
+  if (!comparaConstante(versao, versaoSenha())) return null;
   if (Date.now() > Number(expiraEmStr)) return null;
-  return { usuario };
+
+  return { usuario: Buffer.from(usuarioB64, "base64url").toString() };
 }
 
-export function validarLogin(usuario, senha) {
+// Deriva a senha SEMPRE, mesmo com usuário errado: um `usuarioOk && ...` faria
+// o scrypt rodar só quando o usuário existe, e a diferença de ~80ms na resposta
+// entregaria o DASHBOARD_USER para quem estivesse medindo.
+export async function validarLogin(usuario, senha) {
   const usuarioEsperado = process.env.DASHBOARD_USER || "";
   const hashEsperado = process.env.DASHBOARD_PASS_HASH || "";
   if (!usuarioEsperado || !hashEsperado) return false;
-  // Compara usuário em tempo constante também (evita enumeração por timing).
-  const usuarioOk =
-    Buffer.from(usuario || "").length === Buffer.from(usuarioEsperado).length &&
-    timingSafeEqual(Buffer.from(usuario || ""), Buffer.from(usuarioEsperado));
-  return usuarioOk && senhaConfere(senha, hashEsperado);
+
+  const usuarioOk = comparaConstante(usuario || "", usuarioEsperado);
+  const senhaOk = await senhaConfere(String(senha ?? ""), hashEsperado);
+  return usuarioOk && senhaOk;
 }
 
-export function iniciarSessao(res, usuario) {
+// Secure sempre que a conexão for HTTPS (no Railway, sempre). Não amarramos ao
+// NODE_ENV: se ele vier vazio no deploy, o cookie de sessão sairia sem Secure e
+// viajaria em claro. Em desenvolvimento local (http://localhost) ele fica sem a
+// flag, senão o navegador recusaria o cookie.
+function ehHttps(req) {
+  return (
+    process.env.NODE_ENV === "production" ||
+    req.secure ||
+    req.headers["x-forwarded-proto"] === "https"
+  );
+}
+
+export function iniciarSessao(req, res, usuario) {
   res.cookie(COOKIE, criarCookie(usuario), {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    secure: ehHttps(req),
     maxAge: DURACAO_MS,
   });
 }
 
-export function encerrarSessao(res) {
-  res.clearCookie(COOKIE);
+export function encerrarSessao(req, res) {
+  // As opções precisam bater com as do set, senão o navegador ignora a limpeza.
+  res.clearCookie(COOKIE, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: ehHttps(req),
+  });
 }
 
 // Sem dependência de cookie-parser: o cabeçalho Cookie é só "chave=valor; ..."

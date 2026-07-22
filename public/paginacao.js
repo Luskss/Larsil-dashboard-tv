@@ -34,6 +34,7 @@ export const PAGINAS = [
   { rotulo: "Frota por Líder", arquivo: "frota-lideres.html",    vista: "vista-lideres",   hash: "#lideres" },
   { rotulo: "Mapa da Frota",arquivo: "frota-mapa.html",          vista: "vista-mapa",      hash: "#mapa" },
   { rotulo: "Ativos de TI", arquivo: "ativos-ti.html",           vista: "vista-ativos",    hash: "#ativos" },
+  { rotulo: "Colaboradores",arquivo: "colaboradores.html",       vista: "vista-colaboradores", hash: "#colaboradores" },
   { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },
   { rotulo: "Serviços",     arquivo: "railway-status.html",      vista: "vista-railway",   hash: "#servicos" },
 ];

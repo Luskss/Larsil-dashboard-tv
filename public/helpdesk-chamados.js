@@ -68,7 +68,7 @@ function desenharCard(chamado, coluna, ordem, ehNovo) {
   const corPrioridade = COR_PRIORIDADE[prioridade] || "var(--text-dim)";
   return `<div class="chamado anima-surgir${ehNovo ? " chamado--novo" : ""}" style="--ordem: ${ordem};">
     <div class="chamado__topo">
-      <span>#${chamado.id} · ${formatarHorario(coluna.horario(chamado))}${ehNovo ? '<span class="chamado__novo-selo">NOVO</span>' : ""}</span>
+      <span>#${escapar(chamado.id)} · ${formatarHorario(coluna.horario(chamado))}${ehNovo ? '<span class="chamado__novo-selo">NOVO</span>' : ""}</span>
       ${prioridade ? `<span class="chamado__prioridade" style="--cor-prioridade: ${corPrioridade};">${escapar(prioridade)}</span>` : ""}
     </div>
     <div class="chamado__pessoa chamado__solicitante">Solicitante: <strong>${escapar(nomeCurto(chamado.solicitante) || "não informado")}</strong></div>
