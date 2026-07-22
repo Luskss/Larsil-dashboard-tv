@@ -1,7 +1,8 @@
 // Página Frota por Líder: um card por coordenador, com os contadores de
 // status (mesma regra da página Frotas) e uma grade de mini-KPIs mostrando a
 // quantidade de veículos de cada tipo sob ele.
-// Dados vêm de /api/frota-lideres via consultarFrotaLideres().
+// Dados vêm de /api/frota-lideres via consultarFrotaLideres() — bens sem
+// coordenador vêm agrupados no card LARSIL, no meio da fileira.
 
 import { consultarFrotaLideres } from "./downdetector.js";
 import { animarNumero } from "./animacoes.js";

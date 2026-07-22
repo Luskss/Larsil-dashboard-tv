@@ -6,13 +6,18 @@
 // aparecer a cada troca. Este módulo injeta o CSS, monta as bolinhas e cuida
 // da rotação automática. gestao.html fica fora do SPA (acesso só por URL).
 //
-// Quais vistas aparecem é configurável em gestao.html (guarda a escolha no
-// localStorage, pela chave `arquivo` — nome herdado do tempo em que cada
-// vista era um HTML separado). Para adicionar uma vista nova, crie a
-// <section> no index.html e inclua-a aqui em PAGINAS.
+// Quais vistas aparecem, e em que ordem, é configurável em gestao.html. A
+// escolha vive no SERVIDOR (data.json, via /api/paginas), não no localStorage:
+// a TV precisa seguir o que foi configurado de qualquer máquina, e o
+// localStorage é por navegador. Cada vista é identificada pela chave
+// `arquivo` — nome herdado do tempo em que cada vista era um HTML separado.
+// Para adicionar uma vista nova, crie a <section> no index.html e inclua-a
+// aqui em PAGINAS.
 
-const CHAVE_VISIVEIS = "paginas-visiveis";
-const CHAVE_ORDEM = "paginas-ordem";
+// De quanto em quanto tempo a tela releva a configuração. A TV fica ligada o
+// dia inteiro; sem isto, uma mudança feita no PC só apareceria no próximo
+// reload dela — que pode não acontecer nunca.
+const INTERVALO_SINCRONIA_MS = 30 * 1000;
 
 // Rotação automática entre as vistas (estilo painel de TV, como no projeto
 // lovable): uma barra fina no rodapé enche durante o tempo abaixo e, ao
@@ -39,41 +44,47 @@ export const PAGINAS = [
   { rotulo: "Serviços",     arquivo: "railway-status.html",      vista: "vista-railway",   hash: "#servicos" },
 ];
 
-export function paginasVisiveis() {
-  const salvo = localStorage.getItem(CHAVE_VISIVEIS);
-  if (!salvo) return PAGINAS.map((p) => p.arquivo);
+// Configuração vinda do servidor. `visiveis: null` significa "ninguém
+// configurou ainda" — e é diferente de []: null mostra todas as páginas, []
+// mostra nenhuma (ver o comentário em store.js).
+const CONFIG_PADRAO = { ordem: [], visiveis: null };
+
+export async function carregarConfigPaginas() {
   try {
-    const lista = JSON.parse(salvo);
-    if (Array.isArray(lista)) return lista;
-  } catch {}
-  return PAGINAS.map((p) => p.arquivo);
-}
-
-export function salvarPaginasVisiveis(arquivos) {
-  localStorage.setItem(CHAVE_VISIVEIS, JSON.stringify(arquivos));
-}
-
-// Ordem customizada das páginas (definida arrastando na gestão). Páginas
-// novas que ainda não estão na ordem salva entram no fim, na ordem de PAGINAS.
-export function paginasOrdenadas() {
-  const salvo = localStorage.getItem(CHAVE_ORDEM);
-  let ordem = [];
-  if (salvo) {
-    try {
-      const lista = JSON.parse(salvo);
-      if (Array.isArray(lista)) ordem = lista;
-    } catch {}
+    const resp = await fetch("/api/paginas");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const dados = await resp.json();
+    return {
+      ordem: Array.isArray(dados.ordem) ? dados.ordem : [],
+      visiveis: Array.isArray(dados.visiveis) ? dados.visiveis : null,
+    };
+  } catch (erro) {
+    // Uma TV sem rede ainda tem que mostrar as páginas: cai no padrão em vez
+    // de ficar sem barra de navegação.
+    console.error("Páginas:", erro);
+    return CONFIG_PADRAO;
   }
+}
+
+export async function salvarConfigPaginas({ ordem, visiveis }) {
+  const resp = await fetch("/api/paginas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ordem, visiveis }),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+}
+
+// Aplica a ordem salva sobre PAGINAS. Páginas novas, que ainda não estão na
+// ordem salva, entram no fim — assim uma vista recém-criada aparece sozinha
+// em vez de sumir por não constar da configuração.
+export function ordenarPaginas(ordem) {
   const porArquivo = new Map(PAGINAS.map((p) => [p.arquivo, p]));
-  const ordenadas = ordem.map((arquivo) => porArquivo.get(arquivo)).filter(Boolean);
+  const ordenadas = (ordem || []).map((arquivo) => porArquivo.get(arquivo)).filter(Boolean);
   for (const pagina of PAGINAS) {
     if (!ordenadas.includes(pagina)) ordenadas.push(pagina);
   }
   return ordenadas;
-}
-
-export function salvarPaginasOrdem(arquivos) {
-  localStorage.setItem(CHAVE_ORDEM, JSON.stringify(arquivos));
 }
 
 const CSS = `
@@ -192,41 +203,26 @@ const CSS = `
   }
 `;
 
-export function montarPaginacao() {
+export async function montarPaginacao() {
   const estilo = document.createElement("style");
   estilo.textContent = CSS;
   document.head.appendChild(estilo);
 
   // Só monta a barra no documento que tem as vistas (index.html); em páginas
   // fora do SPA que importem este módulo não há o que navegar.
-  const existentes = paginasOrdenadas().filter((p) => document.getElementById(p.vista));
+  const existentes = PAGINAS.filter((p) => document.getElementById(p.vista));
   if (existentes.length === 0) return;
-
-  const visiveis = new Set(paginasVisiveis());
-  const porHash = existentes.find((p) => p.hash === location.hash);
-  // A vista aberta pela URL sempre aparece, mesmo se desmarcada na gestão,
-  // para a barra não sumir debaixo de quem já está nela.
-  const paginas = existentes.filter((p) => visiveis.has(p.arquivo) || p === porHash);
-  if (paginas.length === 0) paginas.push(existentes[0]);
-
-  const nav = document.createElement("nav");
-  nav.className = "paginacao";
-  nav.setAttribute("aria-label", "Páginas do dashboard");
-  nav.innerHTML = paginas.map((pagina) =>
-    `<button type="button" class="paginacao__bolinha"
-      title="${pagina.rotulo}" aria-label="${pagina.rotulo}"></button>`
-  ).join("");
-  document.body.appendChild(nav);
-
-  const bolinhas = [...nav.querySelectorAll(".paginacao__bolinha")];
-  bolinhas.forEach((bolinha, i) => bolinha.addEventListener("click", () => ativar(paginas[i])));
 
   const barra = document.createElement("div");
   barra.className = "rotacao-progresso";
   document.body.appendChild(barra);
 
+  let nav = null;
+  let bolinhas = [];
+  let paginas = [];
   let atual = null;
   let timer = null;
+  let aplicada = null; // assinatura da configuração já em uso
 
   function ativar(pagina) {
     atual = pagina;
@@ -266,8 +262,55 @@ export function montarPaginacao() {
     }, segundos * 1000);
   }
 
-  ativar(porHash && paginas.includes(porHash) ? porHash : paginas[0]);
+  // (Re)monta a barra para a configuração recebida. Roda na abertura e de novo
+  // toda vez que a configuração muda no servidor.
+  function aplicar(config, inicial = false) {
+    aplicada = JSON.stringify(config);
+
+    const ordenadas = ordenarPaginas(config.ordem).filter((p) => existentes.includes(p));
+    const porHash = ordenadas.find((p) => p.hash === location.hash);
+    // Só na abertura a vista apontada pela URL aparece mesmo se desmarcada,
+    // para a barra não sumir debaixo de quem abriu aquele link. Nas sincronias
+    // seguintes essa exceção não vale: a TV em rotação reescreve o hash para a
+    // página do momento, então desmarcar a página que está no ar a manteria na
+    // barra para sempre — a sincronia só remonta quando a configuração muda.
+    const excecao = inicial ? porHash : null;
+    paginas = config.visiveis
+      ? ordenadas.filter((p) => config.visiveis.includes(p.arquivo) || p === excecao)
+      : ordenadas;
+    if (paginas.length === 0) paginas = [ordenadas[0]];
+
+    if (nav) nav.remove();
+    nav = document.createElement("nav");
+    nav.className = "paginacao";
+    nav.setAttribute("aria-label", "Páginas do dashboard");
+    nav.innerHTML = paginas.map((pagina) =>
+      `<button type="button" class="paginacao__bolinha"
+        title="${pagina.rotulo}" aria-label="${pagina.rotulo}"></button>`
+    ).join("");
+    document.body.appendChild(nav);
+
+    bolinhas = [...nav.querySelectorAll(".paginacao__bolinha")];
+    bolinhas.forEach((bolinha, i) => bolinha.addEventListener("click", () => ativar(paginas[i])));
+
+    // Continua onde estava, se a página atual sobreviveu à mudança — trocar a
+    // ordem no PC não deve fazer a TV pular para outra vista do nada. Se a
+    // página em exibição foi desmarcada, cai na primeira da lista nova.
+    const manter = paginas.includes(atual)
+      ? atual
+      : (porHash && paginas.includes(porHash) ? porHash : paginas[0]);
+    ativar(manter);
+  }
+
+  aplicar(await carregarConfigPaginas(), true);
   montarBotaoSair();
+
+  setInterval(async () => {
+    const config = await carregarConfigPaginas();
+    // Só remonta se mudou de verdade: rebuild a cada 30s reiniciaria a barra
+    // de rotação e a TV nunca trocaria de página sozinha.
+    if (JSON.stringify(config) !== aplicada) aplicar(config);
+  }, INTERVALO_SINCRONIA_MS);
 }
 
 function montarBotaoSair() {

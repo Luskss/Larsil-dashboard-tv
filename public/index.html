@@ -436,23 +436,28 @@
 
     /* ===== Vista Frota por Líder: um card por coordenador (mesmo visual
        neutro dos painéis das outras vistas), com uma grade de mini-KPIs
-       dentro — um por tipo de veículo sob aquele líder. ===== */
+       dentro — um por tipo de veículo sob aquele líder.
+       A vista Colaboradores reusa esta lista e estes cards, trocando os tipos
+       de veículo por classes de cargo. ===== */
     .lideres-lista {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
       display: flex;
       flex-wrap: wrap;
-      align-items: center;
+      /* stretch: todos os cards da linha ficam com a altura do mais alto —
+         quem tem menos tipos não fica "flutuando" mais baixo que os outros. */
+      align-items: stretch;
       align-content: center;
       justify-content: center;
       gap: 1.75rem;
       padding: .5rem;
     }
     .lider-card {
-      /* Cards largos: numa TV cabem dois lado a lado dentro do max-w-[1600px]
-         (2 x 720px + gap), e o texto interno acompanha via cqw. */
-      flex: 0 1 clamp(400px, 45vw, 720px);
+      /* Numa TV cabem os três lado a lado dentro do max-w-[1600px]
+         (3 x 500px + gaps); em telas menores quebram em duas linhas.
+         O texto interno acompanha a largura via cqw. */
+      flex: 0 1 clamp(340px, 30vw, 500px);
       display: flex;
       flex-direction: column;
       gap: 1.4rem;
@@ -513,6 +518,11 @@
     .lider-card__tipos {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
+      /* Ocupa a sobra do card (que agora tem a altura do card mais alto) e
+         divide essa altura igualmente entre as linhas: card com menos tipos
+         ganha KPIs mais altos em vez de um vazio embaixo. */
+      flex: 1;
+      grid-auto-rows: 1fr;
       gap: .9rem;
     }
     .lider-tipo {
@@ -771,63 +781,92 @@
     }
     .ativos-aviso--visivel { display: block; }
 
-    /* ===== Vista Colaboradores: um card por classe de cargo =====
-       Mesmo tile da Frota por Coordenador (.lider-tipo): número grande em
-       cima, identificação embaixo. Os cards dividem por igual a área da vista
-       (auto-rows 1fr), então a grade nunca rola nem deixa vão.
+    /* ===== Vista Colaboradores: um card por coordenador =====
+       Reaproveita os cards da Frota por Líder (.lider-card e .lider-tipo): o
+       nome do coordenador no topo, o efetivo dele logo abaixo e um tile por
+       classe de cargo dentro. Só o que é próprio desta vista fica aqui.
        A cor do número é uma só de propósito: a classe é identidade, mas com 10
        delas uma paleta categórica só somaria ruído — quem compara é o número. */
-    .classes-grid {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      /* 260px dá 5 colunas numa TV Full HD, e as 10 classes caem num 5x2
-         exato — sem card órfão na última fileira. */
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      grid-auto-rows: minmax(0, 1fr);
-      gap: .9rem;
+    /* O efetivo do coordenador: número em destaque e "colaboradores" como
+       rótulo secundário ao lado — mesma hierarquia do total da página. */
+    .colab-coord__total {
+      font-size: clamp(.7rem, 2cqw, .95rem);
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      /* Mesma separação da faixa de status da Frota por Líder, para as duas
+         telas terem o mesmo ritmo vertical dentro do card. */
+      padding-bottom: 1.4rem;
+      border-bottom: 2px solid var(--border);
     }
-    .classe-card {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: .35rem;
-      padding: 1rem .75rem;
-      border-radius: 1.5rem;
-      background: var(--surface);
-      border: 2px solid var(--border);
-      text-align: center;
-      /* cqw: as fontes escalam pela largura do PRÓPRIO card, então o layout
-         aguenta uma classe nova entrar sem ninguém reajustar tamanho. */
-      container-type: inline-size;
-      overflow: hidden;
-      min-height: 0;
-    }
-    /* Com 10 cards a fileira fica alta (~400px numa TV Full HD), então o
-       número cresce junto para o card não parecer vazio no meio. */
-    .classe-card__valor {
-      font-size: clamp(2.5rem, 40cqw, 9rem);
+    .colab-coord__total span {
+      margin-right: .4rem;
+      font-size: clamp(1.75rem, 7cqw, 3.4rem);
       font-weight: 800;
       line-height: 1;
       color: var(--success);
       font-variant-numeric: tabular-nums;
     }
-    /* O nome por extenso vem antes da sigla, e maior: "TRF" não diz nada a
-       quem olha a TV de passagem, "Trabalhador florestal" diz. */
-    .classe-card__nome {
-      font-size: clamp(.9rem, 7cqw, 1.6rem);
-      line-height: 1.2;
-      font-weight: 600;
-      color: var(--text);
+    .colab-tipo__valor { color: var(--success); }
+
+    /* Cada coordenador tem até 8 classes, e em 3 colunas isso vira 3 fileiras:
+       a vista passava da altura da TV, o container rolava e o nome do
+       coordenador — que fica no topo do card — saía da tela. Aqui a grade vai
+       a 4 colunas (8 classes = 2 fileiras) e o tile fica mais compacto, para
+       os três cards caberem inteiros sem rolagem. */
+    .colab-coordenadores {
+      /* nowrap: a linha única ocupa a altura do container, então os cards
+         herdam essa altura em vez de esticarem além dela. */
+      flex-wrap: nowrap;
+      overflow: hidden;
     }
-    /* A sigla é o valor cru de dbo.COLABORADORES: fica de rodapé do card, com
+    .colab-coordenadores .lider-card {
+      /* 1 1 0: os três dividem a largura em partes iguais, sem depender do
+         flex-basis em clamp() da Frota por Líder — que deixa o último card
+         diferente quando sobra espaço na linha. */
+      flex: 1 1 0;
+      min-height: 0;
+      overflow: hidden;
+      gap: 1rem;
+      padding: 1.5rem;
+    }
+    .colab-coordenadores .colab-coord__total { padding-bottom: 1rem; }
+    .colab-coordenadores .lider-card__tipos {
+      grid-template-columns: repeat(4, 1fr);
+      /* Fileira de altura fixa em vez de 1fr: assim o tile tem o mesmo tamanho
+         nos três cards, e não o dobro no LARSIL, que tem só uma fileira.
+         O min(...vh) é o freio para tela baixa — a fileira encolhe junto em
+         vez de empurrar o card para fora da vista. */
+      grid-auto-rows: min(11rem, 21vh);
+      /* Centra o bloco de fileiras na sobra do card: as duas do FABIO/TONIEL e
+         a única do LARSIL ficam no meio, sem afundar para a base. */
+      align-content: center;
+      gap: .6rem;
+    }
+    .colab-coordenadores .lider-tipo {
+      padding: .6rem .4rem;
+      gap: .25rem;
+      border-radius: .9rem;
+      overflow: hidden;
+    }
+    .colab-coordenadores .lider-tipo__valor { font-size: clamp(1.4rem, 5cqw, 2.6rem); }
+    .colab-coordenadores .lider-tipo__nome {
+      font-size: clamp(.5rem, 1.5cqw, .78rem);
+      letter-spacing: .02em;
+      /* Em 4 colunas o tile é estreito e "ADMINISTRATIVO" não cabe numa linha:
+         hifeniza (o documento é lang="pt-br") em vez de vazar pela borda. */
+      hyphens: auto;
+      overflow-wrap: break-word;
+    }
+    /* A sigla é o valor cru de dbo.COLABORADORES: fica de rodapé do tile, com
        letter-spacing porque três maiúsculas coladas leem mal. */
-    .classe-card__sigla {
-      font-size: clamp(.6rem, 3.6cqw, .85rem);
+    .colab-tipo__sigla {
+      font-size: clamp(.55rem, 1.8cqw, .8rem);
       font-weight: 700;
       letter-spacing: .18em;
       color: var(--text-dim);
+      opacity: .75;
     }
 
     /* O total é a manchete da página: número grande na cor de destaque, com o
@@ -1383,7 +1422,7 @@
     <div id="ativos-cards" class="ativos-grid mt-3"></div>
   </section>
 
-  <!-- ===== Vista Colaboradores (efetivo por classe e por função) ===== -->
+  <!-- ===== Vista Colaboradores (efetivo por coordenador, com as classes) ===== -->
   <section id="vista-colaboradores" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
       <h1 class="text-3xl font-extrabold tracking-wide uppercase">Colaboradores</h1>
@@ -1392,8 +1431,8 @@
 
     <div id="colaboradores-aviso" class="colaboradores-aviso" role="alert"></div>
 
-    <!-- Um card por classe de cargo, preenchidos por colaboradores.js -->
-    <div id="colab-classes" class="classes-grid mt-3"></div>
+    <!-- Um card por coordenador, preenchidos por colaboradores.js -->
+    <div id="colab-classes" class="lideres-lista colab-coordenadores mt-3"></div>
   </section>
 
   <!-- ===== Vista Helpdesk (chamados por status) ===== -->

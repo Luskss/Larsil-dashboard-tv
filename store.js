@@ -1,8 +1,9 @@
 // Persistência simples em arquivo JSON.
 //
-// Guarda { servicos: [...], config: { chave: valor }, railway: [...] } em
-// DATA_FILE. No Railway, aponte DATA_DIR para um volume persistente (ex.: /data),
-// senão o arquivo é recriado a cada deploy. Localmente, cai em ./data.
+// Guarda { servicos: [...], config: { chave: valor }, railway: [...],
+// paginas: { ordem, visiveis } } em DATA_FILE. No Railway, aponte DATA_DIR
+// para um volume persistente (ex.: /data), senão o arquivo é recriado a cada
+// deploy. Localmente, cai em ./data.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -10,7 +11,7 @@ import { dirname, join } from "node:path";
 const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), "data");
 const DATA_FILE = join(DATA_DIR, "data.json");
 
-const PADRAO = { servicos: [], config: {}, railway: [] };
+const PADRAO = { servicos: [], config: {}, railway: [], paginas: {} };
 
 async function ler() {
   try {
@@ -62,5 +63,25 @@ export async function listarRailway() {
 export async function salvarRailway(itens) {
   const dados = await ler();
   dados.railway = Array.isArray(itens) ? itens : [];
+  await escrever(dados);
+}
+
+// ===== Páginas do dashboard (ordem e visibilidade da rotação) =====
+// `ordem`: nomes de arquivo na sequência escolhida ([] = ordem do código).
+// `visiveis`: quais aparecem na barra de bolinhas. O null é significativo e
+// diferente de []: null = ninguém configurou ainda (mostra todas), []
+// = configurou e desmarcou tudo. Sem essa distinção, uma instalação nova
+// abriria sem página nenhuma.
+export async function getPaginas() {
+  const { paginas } = await ler();
+  return {
+    ordem: Array.isArray(paginas?.ordem) ? paginas.ordem : [],
+    visiveis: Array.isArray(paginas?.visiveis) ? paginas.visiveis : null,
+  };
+}
+
+export async function salvarPaginas({ ordem, visiveis }) {
+  const dados = await ler();
+  dados.paginas = { ordem, visiveis };
   await escrever(dados);
 }

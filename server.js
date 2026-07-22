@@ -5,6 +5,8 @@
 //   POST /api/servicos          -> salva a lista (body: { servicos: [...] })
 //   GET  /api/config/:chave     -> valor de uma config (ex.: cidade)
 //   POST /api/config/:chave     -> salva config (body: { valor })
+//   GET  /api/paginas           -> ordem e visibilidade das páginas da rotação
+//   POST /api/paginas           -> salva ambas (body: { ordem, visiveis })
 //   GET  /api/clima?cidade=...   -> clima atual via Open-Meteo
 //   GET  /api/dolar              -> dólar (USD-BRL): AwesomeAPI, com PTAX do BC de reserva
 //   GET  /api/soja               -> indicador da soja (R$/saca) via CEPEA/ESALQ
@@ -15,9 +17,9 @@
 //   GET  /api/status/:slug       -> status do Downdetector via Puppeteer
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
-//   GET  /api/frota-lideres      -> qtd de veículos por coordenador (dbo.TICKET)
+//   GET  /api/frota-lideres      -> qtd de veículos por coordenador (dbo.FROTA x dbo.TICKET)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
-//   GET  /api/colaboradores      -> total do quadro e contagem por classe (SQL Server, dbo.COLABORADORES)
+//   GET  /api/colaboradores      -> quadro por coordenador, com as classes (SQL Server, dbo.COLABORADORES)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 
@@ -254,6 +256,39 @@ app.post("/api/config/:chave", async (req, res) => {
   // aqui não tem uso e só abriria espaço para lixo no arquivo.
   const valor = String(req.body?.valor ?? "").slice(0, CONFIG_VALOR_MAX);
   await store.setConfig(req.params.chave, valor);
+  res.json({ ok: true });
+});
+
+// ===== Páginas do dashboard (ordem e visibilidade da rotação) =====
+// Isto morava no localStorage, ou seja, preso ao navegador de quem configurou:
+// reordenar as páginas no PC não mexia na TV, que tem o localStorage dela.
+// Agora mora no data.json — a configuração é uma só, e a TV a busca de tempo
+// em tempo (ver INTERVALO_SINCRONIA_MS em paginacao.js).
+const PAGINAS_MAX = 50;
+const PAGINA_NOME_MAX = 100;
+
+// Só lista de strings curtas. Quais nomes são válidos, quem sabe é o PAGINAS
+// do front — o servidor não conhece as vistas, então valida formato e tamanho
+// para o data.json não virar depósito de lixo, e não o conteúdo.
+function listaDePaginas(valor) {
+  if (!Array.isArray(valor)) return null;
+  return valor
+    .filter((item) => typeof item === "string" && item.length > 0)
+    .slice(0, PAGINAS_MAX)
+    .map((item) => item.slice(0, PAGINA_NOME_MAX));
+}
+
+app.get("/api/paginas", async (_req, res) => {
+  res.json(await store.getPaginas());
+});
+
+app.post("/api/paginas", async (req, res) => {
+  const ordem = listaDePaginas(req.body?.ordem);
+  const visiveis = listaDePaginas(req.body?.visiveis);
+  if (!ordem || !visiveis) {
+    return res.status(400).json({ erro: "Envie 'ordem' e 'visiveis' como listas de nomes de página" });
+  }
+  await store.salvarPaginas({ ordem, visiveis });
   res.json({ ok: true });
 });
 
@@ -890,42 +925,66 @@ app.get("/api/frota-localizacao", async (_req, res) => {
   }
 });
 
-// ===== Frota por líder/coordenador (SQL Server: dbo.TICKET x dbo.FROTA) =====
-// Cada veículo (PREFIXO) é contado uma vez, sob o coordenador do seu
-// ticket mais recente — mesmo critério de "atual" usado em /api/frota-localizacao.
-// O tipo/classe e o status do veículo vêm de dbo.FROTA, casados pelo PREFIXO.
-// O status usa exatamente a regra da página Frotas (STATUS_TILES + só bens
-// ATIVOS), para os contadores de cada coordenador baterem com aquela tela.
+// ===== Frota por líder/coordenador (SQL Server: dbo.FROTA x dbo.TICKET) =====
+// Parte da frota (só bens ATIVOS, como a página Frotas) e busca o coordenador
+// no ticket mais recente do PREFIXO — mesmo critério de "atual" usado em
+// /api/frota-localizacao. Bem sem ticket (ou com ticket sem coordenador) cai
+// no balde LARSIL, que fica no meio da fileira.
+// Com isso o total desta página bate com o total da página Frotas.
+
+// Nome do balde do "resto", compartilhado com a página Colaboradores para as
+// duas telas usarem o mesmo rótulo.
+const SEM_COORDENADOR = "LARSIL";
+
+// Os coordenadores vão do maior para o menor, e o LARSIL fica no meio da
+// fileira em vez de disputar posição por tamanho: ele é o balde do "resto",
+// então ladeado pelos coordenadores de verdade em vez de na ponta.
+function ordenarComLarsilNoCentro(grupos) {
+  const outros = grupos
+    .filter((g) => g.nome !== SEM_COORDENADOR)
+    .sort((a, b) => b.qtd - a.qtd);
+  const larsil = grupos.filter((g) => g.nome === SEM_COORDENADOR);
+  if (!larsil.length) return outros;
+
+  // Com 2 coordenadores dá o meio exato; com um número ímpar deles, o LARSIL
+  // cai um passo à direita do centro.
+  const meio = Math.ceil(outros.length / 2);
+  return [...outros.slice(0, meio), ...larsil, ...outros.slice(meio)];
+}
+
 app.get("/api/frota-lideres", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
 
   try {
+    const tabela = identificadorSql(process.env.FROTA_TABELA, "dbo.FROTA");
     const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
     const colStatus = identificadorSql(process.env.FROTA_COL_STATUS, "STATUS");
     const pool = await conectarSql();
     const { recordset } = await pool.request().query(
-      `SELECT COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), 'Sem coordenador') AS coordenador,
-              t.PREFIXO AS prefixo,
+      `SELECT COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), '${SEM_COORDENADOR}') AS coordenador,
               COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo') AS tipo,
-              CASE WHEN UPPER(LTRIM(RTRIM(f.[STATUS_BEM]))) = 'ATIVO'
-                   THEN f.[${colStatus}] END AS status
-         FROM (
+              f.[${colStatus}] AS status,
+              COUNT(*) AS qtd
+         FROM ${tabela} f
+         LEFT JOIN (
            SELECT PREFIXO, COORDENADOR,
                   ROW_NUMBER() OVER (
                     PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
                   ) AS rn
              FROM dbo.TICKET
             WHERE LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
-         ) t
-         LEFT JOIN dbo.FROTA f ON f.PREFIXO = t.PREFIXO
-        WHERE t.rn = 1`
+         ) t ON t.PREFIXO = f.PREFIXO AND t.rn = 1
+        WHERE UPPER(LTRIM(RTRIM(f.[STATUS_BEM]))) = 'ATIVO'
+        GROUP BY COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), '${SEM_COORDENADOR}'),
+                 COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo'),
+                 f.[${colStatus}]`
     );
 
     const grupos = new Map();
     for (const l of recordset) {
-      const nome = String(l.coordenador ?? "").trim() || "Sem coordenador";
+      const nome = String(l.coordenador ?? "").trim() || SEM_COORDENADOR;
       let g = grupos.get(nome);
       if (!g) {
         g = {
@@ -936,16 +995,16 @@ app.get("/api/frota-lideres", async (_req, res) => {
         };
         grupos.set(nome, g);
       }
-      g.qtd += 1;
-      g.tipos.set(l.tipo, (g.tipos.get(l.tipo) || 0) + 1);
-      // Sem correspondência em dbo.FROTA (ou bem não-ativo) fica fora dos
-      // contadores de status — igual à página Frotas, que só olha bens ATIVOS.
+      g.qtd += l.qtd;
+      g.tipos.set(l.tipo, (g.tipos.get(l.tipo) || 0) + l.qtd);
+      // Status fora do STATUS_TILES (ROUBADO, PERDA TOTAL, sem status) entra
+      // no total do coordenador, mas não vira contador — igual à página Frotas.
       const chave = STATUS_TILES[String(l.status ?? "").trim().toUpperCase()];
-      if (chave) g.status[chave] += 1;
+      if (chave) g.status[chave] += l.qtd;
     }
 
-    const lideres = [...grupos.values()]
-      .map((g) => ({
+    const lideres = ordenarComLarsilNoCentro(
+      [...grupos.values()].map((g) => ({
         nome: g.nome,
         qtd: g.qtd,
         status: g.status,
@@ -953,7 +1012,7 @@ app.get("/api/frota-lideres", async (_req, res) => {
           .map(([nome, qtd]) => ({ nome, qtd }))
           .sort((a, b) => b.qtd - a.qtd),
       }))
-      .sort((a, b) => b.qtd - a.qtd);
+    );
 
     res.json({
       total: lideres.reduce((s, l) => s + l.qtd, 0),
@@ -1002,13 +1061,54 @@ app.get("/api/ativos-ti", async (_req, res) => {
 // hoje — quem sai vai para COLABORADORES_HISTORICO — então COUNT(*) já é o
 // efetivo atual, sem filtro de situação.
 //
-// Vão todas as classes (hoje 10), da maior para a menor; o front desenha um
-// card por classe.
+// O quadro sai agrupado por COORDENADOR, como na Frota por Líder: um card por
+// coordenador de campo, com as classes dentro. Quem responde a outro
+// coordenador (sócios/administrativo) ou está sem coordenador cai no LARSIL.
 
 // Sem espaço nas pontas e em caixa alta, para "ADM " e "adm" não virarem duas
 // linhas na contagem. Vai no SELECT e no GROUP BY, por isso o helper em vez
 // do texto repetido.
 const CLASSE_NORMALIZADA = `UPPER(LTRIM(RTRIM(ISNULL([CLASSE], ''))))`;
+
+// ===== Remendo: gente que já trabalha aqui mas ainda não está na tabela =====
+// A equipe tem dois coordenadores; dbo.COLABORADORES só tem um cadastrado, e
+// o painel mostrava COF 1. Enquanto o cadastro não sai, a contagem entra aqui.
+//
+// APAGUE a entrada assim que a pessoa for cadastrada — a partir daí o banco já
+// a conta, e esta linha passa a contar a mesma pessoa duas vezes.
+const AJUSTE_MANUAL_CLASSE = { COF: 1 };
+
+// O ajuste vale para o card da classe e para o total: se entrasse só na classe,
+// a soma dos cards ficaria um a mais que o "no quadro" e o painel se
+// contradiria na mesma tela.
+function aplicarAjusteManual(classes) {
+  const ajustadas = classes.map((c) => ({
+    ...c,
+    qtd: c.qtd + (AJUSTE_MANUAL_CLASSE[c.nome] || 0),
+  }));
+
+  // Classe ajustada que não veio do banco vira card novo. Acontece se o único
+  // coordenador cadastrado sair: sem isto o card sumiria da TV, mesmo com o
+  // coordenador do remendo ainda na equipe.
+  for (const [nome, qtd] of Object.entries(AJUSTE_MANUAL_CLASSE)) {
+    if (!ajustadas.some((c) => c.nome === nome)) ajustadas.push({ nome, qtd });
+  }
+
+  // O front desenha na ordem em que recebe, e o SQL ordenava por quantidade —
+  // reordena para o ajuste não deixar um card grande depois de um pequeno.
+  return ajustadas.sort((a, b) => b.qtd - a.qtd);
+}
+
+const TOTAL_AJUSTE_MANUAL = Object.values(AJUSTE_MANUAL_CLASSE).reduce((s, n) => s + n, 0);
+
+// Coordenadores de campo, os que ganham card próprio na tela. dbo.COLABORADORES
+// tem outros nomes na coluna COORDENADOR (sócios, que respondem pelo
+// administrativo); esses e quem está sem coordenador entram no LARSIL, do mesmo
+// jeito que na Frota por Líder.
+//
+// Os nomes vão como estão no banco, em caixa alta — a comparação é feita sobre
+// o valor já normalizado. Coordenador novo em campo: acrescente aqui.
+const COORDENADORES_CAMPO = ["TONIEL RODRIGUES", "FABIO BRUM CAMPELO"];
 
 app.get("/api/colaboradores", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
@@ -1017,19 +1117,51 @@ app.get("/api/colaboradores", async (_req, res) => {
 
   try {
     const pool = await conectarSql();
-    const consultaTotal = await pool.request().query(
-      `SELECT COUNT(*) AS total FROM dbo.COLABORADORES`
-    );
     const consultaClasses = await pool.request().query(
-      `SELECT ${CLASSE_NORMALIZADA} AS nome, COUNT(*) AS qtd
+      `SELECT UPPER(LTRIM(RTRIM(ISNULL([COORDENADOR], '')))) AS coordenador,
+              ${CLASSE_NORMALIZADA} AS classe,
+              COUNT(*) AS qtd
          FROM dbo.COLABORADORES
-        GROUP BY ${CLASSE_NORMALIZADA}
-        ORDER BY COUNT(*) DESC`
+        GROUP BY UPPER(LTRIM(RTRIM(ISNULL([COORDENADOR], '')))), ${CLASSE_NORMALIZADA}`
+    );
+
+    const grupos = new Map();
+    for (const l of consultaClasses.recordset) {
+      const bruto = String(l.coordenador ?? "").trim();
+      const nome = COORDENADORES_CAMPO.includes(bruto) ? bruto : SEM_COORDENADOR;
+      let g = grupos.get(nome);
+      if (!g) grupos.set(nome, (g = { nome, qtd: 0, classes: new Map() }));
+      g.qtd += l.qtd;
+      const classe = l.classe || "Sem classe";
+      g.classes.set(classe, (g.classes.get(classe) || 0) + l.qtd);
+    }
+
+    // O coordenador que falta cadastrar não tem linha na tabela, então não tem
+    // coordenador próprio para cair — entra no LARSIL, junto com o resto de
+    // quem está fora dos dois cards de campo.
+    const larsil = grupos.get(SEM_COORDENADOR)
+      || { nome: SEM_COORDENADOR, qtd: 0, classes: new Map() };
+    grupos.set(SEM_COORDENADOR, larsil);
+    larsil.qtd += TOTAL_AJUSTE_MANUAL;
+
+    const coordenadores = ordenarComLarsilNoCentro(
+      [...grupos.values()].map((g) => {
+        const classes = [...g.classes].map(([nome, qtd]) => ({ nome, qtd }));
+        return {
+          nome: g.nome,
+          qtd: g.qtd,
+          // O remendo do coordenador não cadastrado só se aplica ao LARSIL;
+          // os outros cards só precisam da ordenação por tamanho.
+          classes: g.nome === SEM_COORDENADOR
+            ? aplicarAjusteManual(classes)
+            : classes.sort((a, b) => b.qtd - a.qtd),
+        };
+      })
     );
 
     res.json({
-      total: consultaTotal.recordset[0].total,
-      classes: consultaClasses.recordset.map((l) => ({ nome: l.nome || "Sem classe", qtd: l.qtd })),
+      total: coordenadores.reduce((s, c) => s + c.qtd, 0),
+      coordenadores,
     });
   } catch (erro) {
     console.error("Erro ao consultar colaboradores:", erro.message);

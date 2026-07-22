@@ -1,4 +1,7 @@
-// Página Colaboradores: o total do efetivo e a contagem por classe de cargo.
+// Página Colaboradores: o total do efetivo e, dentro de cada coordenador, a
+// contagem por classe de cargo. Mesmo formato da Frota por Líder (um card por
+// coordenador), com o LARSIL recolhendo quem não é de campo ou está sem
+// coordenador na tabela.
 // Dados vêm de /api/colaboradores (SQL Server, dbo.COLABORADORES).
 
 import { animarNumero } from "./animacoes.js";
@@ -29,32 +32,46 @@ function mostrarAviso(mensagem) {
   aviso.classList.toggle("colaboradores-aviso--visivel", Boolean(mensagem));
 }
 
-// Um card por classe, da maior para a menor (a API já manda ordenado). Cada
-// card traz o número e o nome escritos, por isso não há legenda nem tooltip
-// (é um painel de TV: ninguém passa o mouse nele).
-function desenharClasses(classes) {
+// Um card por coordenador (a API já manda ordenado, LARSIL no meio), e
+// dentro dele um tile por classe, da maior para a menor. Cada tile traz o
+// número e o nome escritos, por isso não há legenda nem tooltip (é um painel
+// de TV: ninguém passa o mouse nele).
+function desenharCoordenadores(coordenadores) {
   const alvo = document.querySelector("#colab-classes");
 
-  if (!classes.length) {
+  if (!coordenadores.length) {
     alvo.innerHTML = `<p style="color: var(--text-dim);">Nenhum colaborador encontrado.</p>`;
     return;
   }
 
-  alvo.innerHTML = classes
-    .map((classe, i) => {
-      const sigla = escapar(classe.nome);
-      // Sigla que não esteja no mapa aparece sem a segunda linha, em vez de
-      // sumir do painel — melhor mostrar "XYZ 4" do que esconder gente.
-      const nome = escapar(NOMES_CLASSE[classe.nome] || "");
-      return `<div class="classe-card anima-surgir" style="--ordem: ${i};">
-        <div class="classe-card__valor" data-qtd>0</div>
-        <div class="classe-card__nome">${nome}</div>
-        <div class="classe-card__sigla">${sigla}</div>
-      </div>`;
-    })
+  alvo.innerHTML = coordenadores
+    .map((coord, i) => `
+      <div class="lider-card anima-surgir" style="--ordem: ${i};">
+        <div class="lider-card__nome" title="${escapar(coord.nome)}">${escapar(coord.nome)}</div>
+        <div class="colab-coord__total">
+          <span data-total-coord>0</span> colaboradores
+        </div>
+        <div class="lider-card__tipos">
+          ${coord.classes.map((classe) => `
+            <div class="lider-tipo">
+              <div class="lider-tipo__valor colab-tipo__valor" data-qtd>0</div>
+              <!-- Sigla que não esteja no mapa aparece sem o nome por extenso,
+                   em vez de sumir do painel — melhor "XYZ 4" do que esconder
+                   gente. -->
+              <div class="lider-tipo__nome">${escapar(NOMES_CLASSE[classe.nome] || "")}</div>
+              <div class="colab-tipo__sigla">${escapar(classe.nome)}</div>
+            </div>`).join("")}
+        </div>
+      </div>`)
     .join("");
 
-  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => animarNumero(el, classes[i].qtd));
+  const totais = alvo.querySelectorAll("[data-total-coord]");
+  totais.forEach((el, i) => animarNumero(el, coordenadores[i].qtd));
+
+  // Um querySelectorAll só na página inteira: os tiles vêm na mesma ordem em
+  // que foram gerados, então a lista achatada casa com os cards em sequência.
+  const qtds = [...coordenadores.flatMap((c) => c.classes)];
+  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => animarNumero(el, qtds[i].qtd));
 }
 
 function desenharTotal(total) {
@@ -73,13 +90,13 @@ async function atualizar() {
     // devolvia `funcoes` — estourava lá dentro e caía no catch como "erro ao
     // carregar os dados", mandando procurar o problema na consulta ao banco
     // quando o dado tinha chegado inteiro.
-    if (!Array.isArray(dados.classes)) {
+    if (!Array.isArray(dados.coordenadores)) {
       throw "A API respondeu fora do formato esperado — reinicie o servidor.";
     }
 
     mostrarAviso("");
     desenharTotal(dados.total);
-    desenharClasses(dados.classes);
+    desenharCoordenadores(dados.coordenadores);
   } catch (erro) {
     // O aviso na tela é curto (é uma TV); o motivo real vai para o console.
     console.error("Colaboradores:", erro);

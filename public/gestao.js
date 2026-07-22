@@ -1,7 +1,7 @@
 // Lógica da tela de Gestão. Ficava inline em gestao.html, foi extraída para um
 // arquivo próprio para o CSP poder usar `script-src 'self'` (sem 'unsafe-inline').
 
-import { paginasVisiveis, salvarPaginasVisiveis, paginasOrdenadas, salvarPaginasOrdem } from "./paginacao.js";
+import { PAGINAS, carregarConfigPaginas, salvarConfigPaginas, ordenarPaginas } from "./paginacao.js";
 import { getConfig, setConfig, listarRailwayTokens, salvarRailwayTokens } from "./downdetector.js";
 import { escapar } from "./escape.js";
 
@@ -120,9 +120,26 @@ document.querySelector("#btn-salvar-tokens").addEventListener("click", async () 
   }
 });
 
+// ===== Páginas da rotação =====
+// Ordem e visibilidade ficam no servidor (/api/paginas), não no localStorage:
+// é o que faz a TV seguir o que for configurado daqui.
 const lista = document.querySelector("#lista-paginas");
-const visiveis = new Set(paginasVisiveis());
-let ordem = paginasOrdenadas();
+const statusPaginas = document.querySelector("#paginas-status");
+let visiveis = new Set();
+let ordem = [];
+
+async function salvarPaginas() {
+  statusPaginas.textContent = "Salvando...";
+  try {
+    await salvarConfigPaginas({
+      ordem: ordem.map((p) => p.arquivo),
+      visiveis: [...visiveis],
+    });
+    statusPaginas.textContent = "Salvo — a TV acompanha em até 30s.";
+  } catch {
+    statusPaginas.textContent = "Erro ao salvar as páginas.";
+  }
+}
 
 function renderizarLista() {
   lista.innerHTML = ordem.map((p) => `
@@ -135,14 +152,21 @@ function renderizarLista() {
   `).join("");
 }
 
-renderizarLista();
+carregarConfigPaginas().then((config) => {
+  ordem = ordenarPaginas(config.ordem);
+  // visiveis null = nunca configurado: começa com tudo marcado.
+  visiveis = new Set(config.visiveis || PAGINAS.map((p) => p.arquivo));
+  renderizarLista();
+}).catch(() => {
+  statusPaginas.textContent = "Erro ao carregar as páginas.";
+});
 
 lista.addEventListener("change", (ev) => {
   const alvo = ev.target;
   if (alvo.dataset.arquivo && alvo.type === "checkbox") {
     if (alvo.checked) visiveis.add(alvo.dataset.arquivo);
     else visiveis.delete(alvo.dataset.arquivo);
-    salvarPaginasVisiveis([...visiveis]);
+    salvarPaginas();
   }
 });
 
@@ -183,6 +207,6 @@ lista.addEventListener("drop", (ev) => {
   const [pagina] = ordem.splice(origem, 1);
   ordem.splice(destino, 0, pagina);
 
-  salvarPaginasOrdem(ordem.map((p) => p.arquivo));
+  salvarPaginas();
   renderizarLista();
 });
