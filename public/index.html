@@ -12,6 +12,13 @@
        display — sem navegação de verdade, para a barra do navegador da TV
        (Amazon Silk) não aparecer a cada troca. Bolinhas, rotação automática e
        a troca de vista ficam em paginacao.js. */
+    /* Escala global da interface: o layout foi desenhado para a TV, então num
+       monitor comum tudo fica grande demais. Em vez de mexer em cada rem/vw,
+       encolhemos a página inteira de uma vez via zoom. Ajuste só o número em
+       --escala (1 = 100%, 0.8 = 80%, 0.75 = 75%...). */
+    :root { --escala: 0.7; }
+    body { zoom: var(--escala); }
+
     html, body { height: 100%; }
     body { overflow: hidden; }
     .vista { display: none; }
