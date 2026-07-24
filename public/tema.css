@@ -25,6 +25,15 @@
    Controles em px (toggle, bolinhas) ficam do mesmo tamanho de propósito. */
 html { font-size: clamp(16px, 12px + 0.45vw, 22px); }
 
+/* O mesmo fundo vai no html além do body: durante a transição entre páginas
+   (View Transitions) o navegador anima uma "foto" do body por cima, e o que
+   aparece atrás e nas bordas do deslize é o html — sem isto ele fica branco. */
+html {
+  background-color: var(--bg);
+  background-image: var(--bg-gradiente);
+  background-attachment: fixed;
+}
+
 body {
   background-color: var(--bg);
   background-image: var(--bg-gradiente);

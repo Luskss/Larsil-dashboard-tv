@@ -146,14 +146,33 @@ const CSS = `
     100% { box-shadow: 0 0 0 0 transparent; }
   }
 
-  /* O padding no rodapé garante que a barra fixa não cubra o conteúdo.
-     A animação de entrada de cada vista (pagina-entrar) é aplicada em
-     .vista--ativa, no CSS do index.html — reexecuta a cada troca. */
+  /* O padding no rodapé garante que a barra fixa não cubra o conteúdo. */
   body { padding-bottom: 4.5rem; }
+
+  /* ===== Transição entre páginas (cross-fade com deslize) =====
+     A vista que ENTRA anima com pagina-entrar (aplicada em .vista--ativa, no
+     CSS do index.html); a que SAI recebe .vista--saindo do JS, fica sobreposta
+     (position fixed) e anima o inverso. As duas rodam juntas. Como cada vista
+     é transparente sobre o fundo do site, não há flash branco. */
   @keyframes pagina-entrar {
-    from { opacity: 0; transform: translateY(6px); }
+    from { opacity: 0; transform: translateX(3%); }
     to   { opacity: 1; transform: none; }
   }
+  @keyframes pagina-sair {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translateX(-3%); }
+  }
+  .vista--saindo {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: fixed;
+    inset: 0;
+    z-index: 0;             /* fica atrás da vista que entra */
+    pointer-events: none;
+    animation: pagina-sair .35s cubic-bezier(.4, 0, .2, 1) both;
+  }
+  .vista--ativa { position: relative; z-index: 1; }
 
   /* Barra da rotação automática: enche da esquerda para a direita e, ao
      completar, a vista troca (agendarTroca cuida do tempo). */
@@ -172,6 +191,7 @@ const CSS = `
     .paginacao__bolinha,
     .paginacao__bolinha--ativa,
     .vista--ativa,
+    .vista--saindo,
     body { animation: none; transition: none; }
   }
 
@@ -225,10 +245,41 @@ export async function montarPaginacao() {
   let aplicada = null; // assinatura da configuração já em uso
 
   function ativar(pagina) {
+    const anterior = atual;
     atual = pagina;
+
+    const reduzMovimento = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // A vista anterior não some de imediato: ganha .vista--saindo (fica
+    // sobreposta, animando a saída) enquanto a nova entra por cima — as duas
+    // animam juntas. Como cada vista é transparente sobre o fundo do site, o
+    // cross-fade nunca mostra branco. (Não usamos View Transitions porque o
+    // zoom da página faz o navegador renderizar a "foto" da transição com
+    // áreas brancas.)
+    const anteriorEl = anterior && anterior !== pagina && !reduzMovimento
+      ? document.getElementById(anterior.vista)
+      : null;
+
     for (const p of existentes) {
-      document.getElementById(p.vista).classList.toggle("vista--ativa", p === pagina);
+      const el = document.getElementById(p.vista);
+      if (p === pagina) {
+        el.classList.remove("vista--saindo");
+        el.classList.add("vista--ativa");
+      } else if (el === anteriorEl) {
+        el.classList.remove("vista--ativa");
+        el.classList.add("vista--saindo");
+        const limpar = () => {
+          el.classList.remove("vista--saindo");
+          el.removeEventListener("animationend", limpar);
+          clearTimeout(reserva);
+        };
+        el.addEventListener("animationend", limpar);
+        // Rede de segurança: se animationend não disparar, esconde mesmo assim.
+        const reserva = setTimeout(limpar, 600);
+      } else {
+        el.classList.remove("vista--ativa", "vista--saindo");
+      }
     }
+
     bolinhas.forEach((bolinha, i) => {
       const ativa = paginas[i] === pagina;
       bolinha.classList.toggle("paginacao__bolinha--ativa", ativa);
