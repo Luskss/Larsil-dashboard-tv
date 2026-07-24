@@ -170,6 +170,9 @@ const CSS = `
     inset: 0;
     z-index: 0;             /* fica atrás da vista que entra */
     pointer-events: none;
+    /* Sobe para uma camada própria do compositor já no 1º frame, para o
+       navegador não precisar repintar a tela ao criar a camada no meio. */
+    will-change: transform, opacity;
     animation: pagina-sair .35s cubic-bezier(.4, 0, .2, 1) both;
   }
   .vista--ativa { position: relative; z-index: 1; }

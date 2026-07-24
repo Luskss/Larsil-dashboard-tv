@@ -63,10 +63,9 @@ function renderTiles() {
     // paginacao.js na troca de vista chama de novo quando ela aparecer.
     if (!tilesEl.offsetParent) return;
 
-    // Remove só os placeholders; os widgets reais ficam.
-    tilesEl.querySelectorAll(".tile--vazio").forEach((t) => t.remove());
-
-    // Tile de medição para descobrir a largura real de uma coluna.
+    // Tile de medição para descobrir a largura real de uma coluna. É o único
+    // placeholder que mexemos antes de decidir se vale reconstruir — os que já
+    // estão na grade ficam onde estão até sabermos que a conta mudou.
     const medidor = document.createElement("div");
     medidor.className = "tile tile--vazio";
     tilesEl.appendChild(medidor);
@@ -104,6 +103,17 @@ function renderTiles() {
     });
 
     const quantidade = Math.max(0, colunas * fileiras - ocupadas);
+
+    // Nada mudou desde a última vez (mesma quantidade de placeholders já na
+    // grade): sai sem tocar no DOM. Isso evita o churn — e o recomeço da
+    // cascata anima-surgir — a cada troca de vista de volta para o dashboard,
+    // que é justamente quando o resize é disparado. A grade já está correta.
+    const atuais = tilesEl.querySelectorAll(".tile--vazio").length;
+    if (atuais === quantidade) return;
+
+    // Layout mudou de verdade (janela redimensionada): reconstrói do zero.
+    tilesEl.querySelectorAll(".tile--vazio").forEach((t) => t.remove());
+
     // Entrada em cascata: o % 12 recicla os atrasos para a onda não demorar
     // demais quando há muitos placeholders (+2 deixa os widgets na frente).
     tilesEl.insertAdjacentHTML(

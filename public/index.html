@@ -473,6 +473,19 @@
       background: var(--surface);
       border: 2px solid var(--border);
       container-type: inline-size;
+      /* Transições do "holofote": ao entrar em foco o card cresce (flex-grow),
+         ganha um leve zoom e destaque; os demais recuam e escurecem.
+         flex-basis também entra na transição para a PRIMEIRA ativação partir do
+         visual atual (Frota parada em basis clamp, Colaboradores em terços
+         iguais) em vez de colapsar antes do flex-grow subir de 0. */
+      transition:
+        flex-grow .8s cubic-bezier(.22, 1, .36, 1),
+        flex-basis .8s cubic-bezier(.22, 1, .36, 1),
+        transform .8s cubic-bezier(.22, 1, .36, 1),
+        opacity .6s ease,
+        filter .6s ease,
+        border-color .6s ease,
+        box-shadow .6s ease;
     }
     .lider-card__nome {
       font-size: clamp(1.35rem, 3.5cqw, 2.2rem);
@@ -559,6 +572,50 @@
       letter-spacing: .04em;
       text-transform: uppercase;
       color: var(--text-dim);
+    }
+    /* Os números crescem sozinhos com a largura do card (cqw + container-type),
+       mas a transição deixa esse salto suave junto do resto do holofote. */
+    .lider-status__valor,
+    .lider-tipo__valor { transition: font-size .8s cubic-bezier(.22, 1, .36, 1); }
+
+    /* ===== Holofote: um coordenador por vez em destaque =====
+       frota-lideres.js / colaboradores.js ligam .lideres-lista--foco e alternam
+       .lider-card--foco / --recuado entre os cards. Sem a classe no container,
+       tudo volta ao visual normal (movimento reduzido ou 1 só coordenador).
+
+       O tamanho vem por flex-grow com base 0, não por flex-basis: assim o mesmo
+       peso vale nas duas listas, que têm modelos de flex diferentes — a Frota
+       usa wrap + basis em clamp(), os Colaboradores nowrap + flex:1 1 0. A
+       especificidade extra (.lider-card.lider-card--foco) é de propósito, para
+       ganhar do `flex: 1 1 0` de .colab-coordenadores .lider-card. */
+    .lideres-lista--foco .lider-card.lider-card--recuado {
+      flex: .75 1 0;
+      transform: scale(.94);
+      opacity: .32;
+      filter: saturate(.55);
+    }
+    .lideres-lista--foco .lider-card.lider-card--foco {
+      flex: 2.6 1 0;
+      transform: scale(1.02);
+      opacity: 1;
+      border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+      box-shadow:
+        0 30px 80px -32px rgba(0, 0, 0, .65),
+        0 0 0 2px color-mix(in srgb, var(--success) 28%, transparent);
+      z-index: 2;
+    }
+    /* No card em foco os números ficam ainda maiores (teto do clamp mais alto). */
+    .lideres-lista--foco .lider-card--foco .lider-status__valor {
+      font-size: clamp(2.4rem, 8cqw, 4.8rem);
+    }
+    .lideres-lista--foco .lider-card--foco .lider-tipo__valor {
+      font-size: clamp(2.8rem, 10cqw, 6rem);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .lider-card,
+      .lider-status__valor,
+      .lider-tipo__valor { transition: none; }
     }
 
     .lideres-aviso {

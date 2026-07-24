@@ -5,6 +5,7 @@
 // Dados vêm de /api/colaboradores (SQL Server, dbo.COLABORADORES).
 
 import { animarNumero } from "./animacoes.js";
+import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
@@ -66,12 +67,20 @@ function desenharCoordenadores(coordenadores) {
     .join("");
 
   const totais = alvo.querySelectorAll("[data-total-coord]");
-  totais.forEach((el, i) => animarNumero(el, coordenadores[i].qtd));
+  totais.forEach((el, i) => {
+    el.dataset.valor = coordenadores[i].qtd; // guardado para o holofote re-animar
+    animarNumero(el, coordenadores[i].qtd);
+  });
 
   // Um querySelectorAll só na página inteira: os tiles vêm na mesma ordem em
   // que foram gerados, então a lista achatada casa com os cards em sequência.
   const qtds = [...coordenadores.flatMap((c) => c.classes)];
-  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => animarNumero(el, qtds[i].qtd));
+  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => {
+    el.dataset.valor = qtds[i].qtd;
+    animarNumero(el, qtds[i].qtd);
+  });
+
+  iniciarHolofote(alvo);
 }
 
 function desenharTotal(total) {

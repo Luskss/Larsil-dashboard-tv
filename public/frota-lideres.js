@@ -6,6 +6,7 @@
 
 import { consultarFrotaLideres } from "./downdetector.js";
 import { animarNumero } from "./animacoes.js";
+import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras vistas
@@ -79,11 +80,19 @@ function desenharLideres(lideres, total) {
   `).join("");
 
   const todosTipos = lideres.flatMap((l) => l.tipos || []);
-  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => animarNumero(el, todosTipos[i].qtd));
+  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => {
+    el.dataset.valor = todosTipos[i].qtd; // guardado para o holofote re-animar
+    animarNumero(el, todosTipos[i].qtd);
+  });
 
   // Mesma ordem do HTML acima: 4 contadores por líder, um bloco após o outro.
   const todosStatus = lideres.flatMap((l) => STATUS.map((s) => (l.status || {})[s.chave] || 0));
-  alvo.querySelectorAll("[data-status]").forEach((el, i) => animarNumero(el, todosStatus[i]));
+  alvo.querySelectorAll("[data-status]").forEach((el, i) => {
+    el.dataset.valor = todosStatus[i];
+    animarNumero(el, todosStatus[i]);
+  });
+
+  iniciarHolofote(alvo);
 }
 
 async function atualizar() {
