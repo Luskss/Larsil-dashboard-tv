@@ -55,7 +55,12 @@ body {
 }
 .anima-surgir {
   animation: surgir .5s cubic-bezier(.22, 1, .36, 1) both;
-  animation-delay: calc(var(--ordem, 0) * 60ms);
+  /* O atraso tem teto. Cada elemento com a cascata pendente é uma camada
+     esperando para animar; numa lista de 8 cards o último só começava depois
+     de 480ms, prolongando por quase um segundo o momento mais pesado da tela
+     (entrada da vista + primeira pintura + contadores subindo). Com o teto em
+     5 passos a cascata continua legível e todo mundo termina junto. */
+  animation-delay: calc(min(var(--ordem, 0), 5) * 55ms);
 }
 .anima-pop { animation: pop .45s cubic-bezier(.22, 1, .36, 1) both; }
 @media (prefers-reduced-motion: reduce) {

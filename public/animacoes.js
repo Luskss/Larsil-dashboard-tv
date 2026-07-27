@@ -4,6 +4,14 @@
 
 const DURACAO_MS = 900;
 
+// A contagem roda a ~30fps, não a 60. Cada número reescrito é um relayout de
+// texto (o mais caro que existe numa CPU fraca) e uma tela dessas atualiza
+// dezenas deles ao mesmo tempo — a 60fps o Fire Stick perdia quadros das
+// outras animações que rodam junto. Num número subindo, 30fps é indistinguível
+// de 60; o que se vê é o valor mudando, não a taxa de quadros.
+const INTERVALO_QUADRO_MS = 32;
+let ultimoQuadro = 0;
+
 // Preferência de movimento reduzido: consultada uma vez e mantida atualizada
 // por evento, em vez de chamar matchMedia a cada número animado.
 const consultaMovimento = matchMedia("(prefers-reduced-motion: reduce)");
@@ -16,6 +24,12 @@ const ativas = new Map();
 let rafId = 0;
 
 function tick(agora) {
+  if (agora - ultimoQuadro < INTERVALO_QUADRO_MS) {
+    rafId = requestAnimationFrame(tick);
+    return;
+  }
+  ultimoQuadro = agora;
+
   ativas.forEach((anim, el) => {
     const t = Math.min((agora - anim.inicio) / DURACAO_MS, 1);
     const suave = 1 - Math.pow(1 - t, 3);
@@ -40,4 +54,22 @@ export function animarNumero(el, valor, formatar = (v) => v.toLocaleString("pt-B
   }
   ativas.set(el, { valor, formatar, inicio: performance.now(), ultimoTexto: null });
   if (!rafId) rafId = requestAnimationFrame(tick);
+}
+
+// Distribui uma lista de números pelos elementos de `seletor` dentro de `raiz`,
+// na ordem em que aparecem no DOM, guardando cada alvo em data-valor (é de lá
+// que o holofote relê para re-animar o card em foco).
+//
+// Por padrão só re-anima o que MUDOU de valor. As telas se atualizam a cada
+// 5 min e quase nada muda entre uma consulta e outra; sem isto, todos os
+// números da página voltavam a zero e subiam de novo a cada atualização —
+// caro e, pior, parecia defeito. Passe `forcar` quando o HTML acabou de ser
+// remontado e os elementos ainda estão zerados.
+export function aplicarNumeros(raiz, seletor, valores, forcar = false) {
+  raiz.querySelectorAll(seletor).forEach((el, i) => {
+    const valor = Number(valores[i]) || 0;
+    if (!forcar && Number(el.dataset.valor) === valor) return;
+    el.dataset.valor = valor;
+    animarNumero(el, valor);
+  });
 }

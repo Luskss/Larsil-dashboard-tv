@@ -5,7 +5,7 @@
 // coordenador vêm agrupados no card LARSIL, no meio da fileira.
 
 import { consultarFrotaLideres } from "./downdetector.js";
-import { animarNumero } from "./animacoes.js";
+import { aplicarNumeros } from "./animacoes.js";
 import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
 
@@ -47,52 +47,71 @@ function mostrarAviso(mensagem) {
 
 const titulo = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
+// Assinatura da ESTRUTURA da lista: quem são os coordenadores, em que ordem, e
+// quais tipos de veículo cada um tem. Os números ficam de fora de propósito —
+// é justamente o que muda entre uma consulta e outra.
+function assinaturaDe(lideres) {
+  return lideres
+    .map((l) => `${l.nome}:${(l.tipos || []).map((t) => t.nome).join(",")}`)
+    .join("|");
+}
+
+let assinaturaAtual = null;
+
 function desenharLideres(lideres, total) {
   const alvo = document.querySelector("#lideres-lista");
   document.querySelector("#lideres-total").textContent =
     total ? `${total.toLocaleString("pt-BR")} veículos` : "";
 
   if (!lideres.length) {
+    assinaturaAtual = null;
     alvo.innerHTML = `<p style="color: var(--text-dim);">Nenhum veículo encontrado.</p>`;
     return;
   }
 
-  alvo.innerHTML = lideres.map((l, i) => `
-    <div class="lider-card anima-surgir" style="--ordem: ${i};">
-      <div class="lider-card__nome" title="${escapar(l.nome)}">${escapar(l.nome)}</div>
-      <div class="lider-card__status">
-        ${STATUS.map((s) => `
-          <div class="lider-status lider-status--${s.chave}">
-            <div class="lider-status__valor" data-status>0</div>
-            <div class="lider-status__nome">${s.rotulo}</div>
-          </div>
-        `).join("")}
-      </div>
-      <div class="lider-card__tipos">
-        ${(l.tipos || []).map((t) => `
-          <div class="lider-tipo" style="--cor-tipo: ${corDoTipo(t.nome)};">
-            <div class="lider-tipo__valor" data-qtd>0</div>
-            <div class="lider-tipo__nome">${escapar(titulo(t.nome))}</div>
-          </div>
-        `).join("")}
-      </div>
-    </div>
-  `).join("");
+  // Só remonta o HTML quando a estrutura muda. Refazer os cards a cada 5 min
+  // custava layout + repintura da vista inteira, reiniciava a cascata de
+  // entrada e obrigava o holofote a recomeçar do primeiro coordenador — um
+  // engasgo visível, periódico, para mudar meia dúzia de números.
+  const assinatura = assinaturaDe(lideres);
+  const remontar = assinatura !== assinaturaAtual;
 
+  if (remontar) {
+    assinaturaAtual = assinatura;
+    alvo.innerHTML = lideres.map((l, i) => `
+      <div class="lider-card anima-surgir" style="--ordem: ${i};">
+        <div class="lider-card__nome" title="${escapar(l.nome)}">${escapar(l.nome)}</div>
+        <div class="lider-card__status">
+          ${STATUS.map((s) => `
+            <div class="lider-status lider-status--${s.chave}">
+              <div class="lider-status__valor" data-status>0</div>
+              <div class="lider-status__nome">${s.rotulo}</div>
+            </div>
+          `).join("")}
+        </div>
+        <div class="lider-card__tipos">
+          ${(l.tipos || []).map((t) => `
+            <div class="lider-tipo" style="--cor-tipo: ${corDoTipo(t.nome)};">
+              <div class="lider-tipo__valor" data-qtd>0</div>
+              <div class="lider-tipo__nome">${escapar(titulo(t.nome))}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  // As listas achatadas seguem a mesma ordem do HTML acima — os tiles de tipo
+  // de todos os cards em sequência, e 4 contadores de status por líder.
   const todosTipos = lideres.flatMap((l) => l.tipos || []);
-  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => {
-    el.dataset.valor = todosTipos[i].qtd; // guardado para o holofote re-animar
-    animarNumero(el, todosTipos[i].qtd);
-  });
+  aplicarNumeros(alvo, "[data-qtd]", todosTipos.map((t) => t.qtd), remontar);
 
-  // Mesma ordem do HTML acima: 4 contadores por líder, um bloco após o outro.
   const todosStatus = lideres.flatMap((l) => STATUS.map((s) => (l.status || {})[s.chave] || 0));
-  alvo.querySelectorAll("[data-status]").forEach((el, i) => {
-    el.dataset.valor = todosStatus[i];
-    animarNumero(el, todosStatus[i]);
-  });
+  aplicarNumeros(alvo, "[data-status]", todosStatus, remontar);
 
-  iniciarHolofote(alvo);
+  // Só com cards novos: reiniciar o holofote com os mesmos cards faria o
+  // destaque saltar de volta para o primeiro coordenador a cada atualização.
+  if (remontar) iniciarHolofote(alvo);
 }
 
 async function atualizar() {

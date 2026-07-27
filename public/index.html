@@ -6,6 +6,20 @@
   <title>Monitor de Serviços</title>
   <link rel="stylesheet" href="./tailwind.css">
   <link rel="stylesheet" href="./tema.css">
+  <script>
+    /* Escala da interface. Roda antes do primeiro paint de propósito (script
+       síncrono no <head>), senão a página apareceria em 100% e saltaria.
+       Uso: abra ?escala=0.7 uma vez no monitor de trabalho; ?escala=1 desfaz.
+       A TV nunca recebe o parâmetro e fica em 1 — sem custo de zoom. */
+    (function () {
+      var daUrl = new URLSearchParams(location.search).get("escala");
+      if (daUrl !== null) localStorage.setItem("escala-ui", daUrl);
+      var escala = Number(localStorage.getItem("escala-ui"));
+      if (escala > 0 && escala !== 1) {
+        document.documentElement.style.setProperty("--escala", escala);
+      }
+    })();
+  </script>
   <style>
     /* ===== SPA: o site inteiro num único HTML (menos gestao.html) =====
        Cada "página" é uma <section class="vista"> aqui dentro e a troca é só
@@ -13,10 +27,14 @@
        (Amazon Silk) não aparecer a cada troca. Bolinhas, rotação automática e
        a troca de vista ficam em paginacao.js. */
     /* Escala global da interface: o layout foi desenhado para a TV, então num
-       monitor comum tudo fica grande demais. Em vez de mexer em cada rem/vw,
-       encolhemos a página inteira de uma vez via zoom. Ajuste só o número em
-       --escala (1 = 100%, 0.8 = 80%, 0.75 = 75%...). */
-    :root { --escala: 0.7; }
+       monitor comum tudo fica grande demais e encolhemos a página inteira de
+       uma vez via zoom.
+       O padrão é 1 (a TV): zoom diferente de 1 encarece TODO layout e faz o
+       Chromium do Fire Stick rasterizar as camadas compostas numa escala
+       fracionária — as animações ficam mais caras e o texto mais mole. Quem
+       está num monitor abre uma vez com ?escala=0.7 (ver o script no <head>)
+       e a preferência fica salva naquele navegador. */
+    :root { --escala: 1; }
     body { zoom: var(--escala); }
 
     html, body { height: 100%; }
@@ -458,7 +476,12 @@
       align-content: center;
       justify-content: center;
       gap: 1.75rem;
-      padding: .5rem;
+      /* A folga não é estética: o holofote aumenta o card em foco por
+         transform (scale), que NÃO reserva espaço no layout. Sem esta margem
+         ele encostaria na borda do container — recortado no Colaboradores
+         (overflow: hidden) e, aqui, empurrando a área rolável para cima e
+         piscando uma barra de rolagem no meio da animação. */
+      padding: 1rem 1.25rem;
     }
     .lider-card {
       /* Numa TV cabem os três lado a lado dentro do max-w-[1600px]
@@ -473,22 +496,16 @@
       background: var(--surface);
       border: 2px solid var(--border);
       container-type: inline-size;
-      /* Transições do "holofote": ao entrar em foco o card cresce (flex-grow),
-         ganha um leve zoom e destaque; os demais recuam e escurecem.
-         flex-basis também entra na transição para a PRIMEIRA ativação partir do
-         visual atual (Frota parada em basis clamp, Colaboradores em terços
-         iguais) em vez de colapsar antes do flex-grow subir de 0.
-         box-shadow ficou FORA da transição: o holofote já anima flex-grow e
-         flex-basis, que refazem o layout da fileira inteira a cada quadro por
-         0.8s, a cada 4.5s. Somar a isso um box-shadow em transição obrigava
-         uma repintura por cima de cada um desses quadros. A sombra entra de
-         uma vez, sob o movimento — na prática não se percebe. */
+      /* Transições do "holofote": ver o bloco .lideres-lista--foco abaixo.
+         Só transform e opacity entram aqui — as duas propriedades que o
+         compositor resolve sozinho, sem layout nem repintura.
+         box-shadow fica FORA da transição de propósito: não é compositável,
+         então animá-la obrigaria uma repintura do card por quadro. A sombra
+         entra de uma vez, sob o movimento — na prática não se percebe. */
       transition:
-        flex-grow .8s cubic-bezier(.22, 1, .36, 1),
-        flex-basis .8s cubic-bezier(.22, 1, .36, 1),
-        transform .8s cubic-bezier(.22, 1, .36, 1),
-        opacity .6s ease,
-        border-color .6s ease;
+        transform .7s cubic-bezier(.22, 1, .36, 1),
+        opacity .5s ease,
+        border-color .5s ease;
     }
     .lider-card__nome {
       font-size: clamp(1.35rem, 3.5cqw, 2.2rem);
@@ -576,32 +593,44 @@
       text-transform: uppercase;
       color: var(--text-dim);
     }
-    /* Os números crescem sozinhos com a largura do card (cqw + container-type),
-       mas a transição deixa esse salto suave junto do resto do holofote. */
-    .lider-status__valor,
-    .lider-tipo__valor { transition: font-size .8s cubic-bezier(.22, 1, .36, 1); }
+    /* Os números continuam dimensionados por cqw (crescem com a largura do
+       card quando a TELA muda de tamanho), mas sem transição: animar font-size
+       remede e re-rasteriza cada texto a cada quadro — a operação mais cara
+       que existe num navegador de TV. Como o holofote agora só aplica scale,
+       a largura do card não muda mais durante a animação e não há salto de
+       tamanho para suavizar. */
 
     /* ===== Holofote: um coordenador por vez em destaque =====
        frota-lideres.js / colaboradores.js ligam .lideres-lista--foco e alternam
        .lider-card--foco / --recuado entre os cards. Sem a classe no container,
        tudo volta ao visual normal (movimento reduzido ou 1 só coordenador).
 
-       O tamanho vem por flex-grow com base 0, não por flex-basis: assim o mesmo
-       peso vale nas duas listas, que têm modelos de flex diferentes — a Frota
-       usa wrap + basis em clamp(), os Colaboradores nowrap + flex:1 1 0. A
-       especificidade extra (.lider-card.lider-card--foco) é de propósito, para
-       ganhar do `flex: 1 1 0` de .colab-coordenadores .lider-card. */
-    /* Cards recuados: só opacidade + escala (ambas compostas na GPU, sem
-       repaint). Evita de propósito filter/blur, que num navegador de TV fraco
-       (Silk/Fire TV) forçam repintura e derrubam o frame rate. */
+       O destaque é 100% transform + opacity: o card em foco dá um leve passo
+       à frente e os outros recuam e escurecem. Nada de flex-grow/flex-basis
+       aqui — a versão anterior animava esses dois, o que refazia o layout da
+       fileira inteira (e reavaliava todos os cqw dos textos dentro dela) a
+       cada quadro, por 0.8s, a cada 4.5s, para sempre. Num Fire Stick era de
+       longe a animação mais cara do projeto. Com scale, o layout acontece uma
+       vez só e cada quadro é trabalho do compositor.
+       Também evita de propósito filter/blur, que forçam repintura.
+
+       A escala do foco é contida (1.03) porque transform não reserva espaço:
+       o que cresce demais vaza do container. O contraste vem principalmente
+       dos vizinhos, que caem para .88 e ficam translúcidos — a diferença
+       percebida entre os dois é de ~17%, mais do que suficiente de longe. */
+    .lideres-lista--foco .lider-card {
+      /* Promove os cards a camadas próprias uma vez só, enquanto o holofote
+         está ligado. Sem isto o navegador criaria e destruiria a camada a cada
+         troca — uma repintura de todos os cards a cada 4.5s, justamente o
+         engasgo que a mudança acima elimina. */
+      will-change: transform, opacity;
+    }
     .lideres-lista--foco .lider-card.lider-card--recuado {
-      flex: .75 1 0;
-      transform: scale(.94);
-      opacity: .32;
+      transform: scale(.88);
+      opacity: .3;
     }
     .lideres-lista--foco .lider-card.lider-card--foco {
-      flex: 2.6 1 0;
-      transform: scale(1.02);
+      transform: scale(1.03);
       opacity: 1;
       border-color: color-mix(in srgb, var(--success) 55%, var(--border));
       box-shadow:
@@ -609,18 +638,10 @@
         0 0 0 2px color-mix(in srgb, var(--success) 28%, transparent);
       z-index: 2;
     }
-    /* No card em foco os números ficam ainda maiores (teto do clamp mais alto). */
-    .lideres-lista--foco .lider-card--foco .lider-status__valor {
-      font-size: clamp(2.4rem, 8cqw, 4.8rem);
-    }
-    .lideres-lista--foco .lider-card--foco .lider-tipo__valor {
-      font-size: clamp(2.8rem, 10cqw, 6rem);
-    }
 
     @media (prefers-reduced-motion: reduce) {
-      .lider-card,
-      .lider-status__valor,
-      .lider-tipo__valor { transition: none; }
+      .lider-card { transition: none; }
+      .lideres-lista--foco .lider-card { will-change: auto; }
     }
 
     .lideres-aviso {
@@ -724,11 +745,16 @@
       border-radius: 50%;
       background: var(--success);
       opacity: .28;
-      animation: mapa-pulso 2.6s ease-in-out infinite;
+      /* Contado, não infinito: cada halo animando opacity é uma camada própria
+         no compositor, e são dezenas de pinos. Antes eles pulsavam enquanto a
+         vista estivesse no ar (30s por rodada, o dia inteiro) só para dizer
+         "isto aqui é um veículo" — o recado é dado nos primeiros segundos.
+         `both` faz parar no valor de 100%, o repouso. */
+      animation: mapa-pulso 2.6s ease-in-out 5 both;
     }
     @keyframes mapa-pulso {
-      0%, 100% { opacity: .12; }
-      50%      { opacity: .45; }
+      0%, 100% { opacity: .2; }
+      50%      { opacity: .5; }
     }
     .mapa-pino__ponto {
       position: absolute;
@@ -1250,7 +1276,10 @@
       border-radius: inherit;
       background: var(--critical);
       will-change: transform, opacity;
-      animation: toast-pulso 1.6s ease-out infinite;
+      /* Contado: o toast fica minutos na tela e o pulso só precisa puxar o
+         olho na chegada. Infinito, mantinha uma camada do compositor viva e
+         uma composição por quadro o tempo todo, sem informar mais nada. */
+      animation: toast-pulso 1.6s ease-out 6 both;
     }
     @keyframes toast-pulso {
       0%   { opacity: .7; transform: scale(1); }

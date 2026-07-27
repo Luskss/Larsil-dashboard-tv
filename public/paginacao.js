@@ -159,7 +159,11 @@ const CSS = `
     border-radius: inherit;
     background: var(--success);
     will-change: transform, opacity;
-    animation: paginacao-pulso 2.4s ease-out infinite;
+    /* Contado, não infinito. O ::after só existe enquanto a bolinha está
+       ativa, então o pulso recomeça sozinho a cada troca de página: 4 voltas
+       (~10s) no começo de cada rodada de 30s, em vez de compor um quadro a
+       cada 16ms para sempre, enquanto a TV estiver ligada. */
+    animation: paginacao-pulso 2.4s ease-out 4 both;
   }
   @keyframes paginacao-pulso {
     0%   { opacity: .5; transform: scale(1); }
@@ -173,15 +177,24 @@ const CSS = `
   /* ===== Transição entre páginas (cross-fade com deslize) =====
      A vista que ENTRA anima com pagina-entrar (aplicada em .vista--ativa, no
      CSS do index.html); a que SAI recebe .vista--saindo do JS, fica sobreposta
-     (position fixed) e anima o inverso. As duas rodam juntas. Como cada vista
-     é transparente sobre o fundo do site, não há flash branco. */
+     (position fixed) e apaga por baixo. As duas rodam juntas. Como cada vista
+     é transparente sobre o fundo do site, não há flash branco.
+
+     Só a vista que ENTRA desliza. A que sai apaga sem transform de propósito:
+     são duas camadas do tamanho da tela sobrepostas, e deslocar uma camada de
+     1080p por uma fração de pixel obriga a GPU a reamostrar a textura inteira
+     a cada quadro — num Fire Stick é justamente o que falta (fill rate). Só
+     mudar o alfa é praticamente de graça, e o deslize de quem entra já dá
+     sozinho a leitura de direção.
+     A saída também é mais curta que a entrada: a janela em que as duas
+     camadas convivem encolhe, e o fim da transição fica com uma camada só. */
   @keyframes pagina-entrar {
     from { opacity: 0; transform: translateX(3%); }
     to   { opacity: 1; transform: none; }
   }
   @keyframes pagina-sair {
-    from { opacity: 1; transform: none; }
-    to   { opacity: 0; transform: translateX(-3%); }
+    from { opacity: 1; }
+    to   { opacity: 0; }
   }
   .vista--saindo {
     display: flex;
@@ -193,8 +206,8 @@ const CSS = `
     pointer-events: none;
     /* Sobe para uma camada própria do compositor já no 1º frame, para o
        navegador não precisar repintar a tela ao criar a camada no meio. */
-    will-change: transform, opacity;
-    animation: pagina-sair .35s cubic-bezier(.4, 0, .2, 1) both;
+    will-change: opacity;
+    animation: pagina-sair .22s ease-out both;
   }
   .vista--ativa { position: relative; z-index: 1; }
 

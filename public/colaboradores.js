@@ -4,7 +4,7 @@
 // coordenador na tabela.
 // Dados vêm de /api/colaboradores (SQL Server, dbo.COLABORADORES).
 
-import { animarNumero } from "./animacoes.js";
+import { aplicarNumeros } from "./animacoes.js";
 import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
 
@@ -37,56 +37,73 @@ function mostrarAviso(mensagem) {
 // dentro dele um tile por classe, da maior para a menor. Cada tile traz o
 // número e o nome escritos, por isso não há legenda nem tooltip (é um painel
 // de TV: ninguém passa o mouse nele).
+// Assinatura da ESTRUTURA: quais coordenadores, em que ordem, e quais classes
+// de cargo cada um tem. Sem os números — é o que muda entre as consultas.
+function assinaturaDe(coordenadores) {
+  return coordenadores
+    .map((c) => `${c.nome}:${c.classes.map((k) => k.nome).join(",")}`)
+    .join("|");
+}
+
+let assinaturaAtual = null;
+
 function desenharCoordenadores(coordenadores) {
   const alvo = document.querySelector("#colab-classes");
 
   if (!coordenadores.length) {
+    assinaturaAtual = null;
     alvo.innerHTML = `<p style="color: var(--text-dim);">Nenhum colaborador encontrado.</p>`;
     return;
   }
 
-  alvo.innerHTML = coordenadores
-    .map((coord, i) => `
-      <div class="lider-card anima-surgir" style="--ordem: ${i};">
-        <div class="lider-card__nome" title="${escapar(coord.nome)}">${escapar(coord.nome)}</div>
-        <div class="colab-coord__total">
-          <span data-total-coord>0</span> colaboradores
-        </div>
-        <div class="lider-card__tipos">
-          ${coord.classes.map((classe) => `
-            <div class="lider-tipo">
-              <div class="lider-tipo__valor colab-tipo__valor" data-qtd>0</div>
-              <!-- Sigla que não esteja no mapa aparece sem o nome por extenso,
-                   em vez de sumir do painel — melhor "XYZ 4" do que esconder
-                   gente. -->
-              <div class="lider-tipo__nome">${escapar(NOMES_CLASSE[classe.nome] || "")}</div>
-              <div class="colab-tipo__sigla">${escapar(classe.nome)}</div>
-            </div>`).join("")}
-        </div>
-      </div>`)
-    .join("");
+  // Só remonta quando a estrutura muda (ver o mesmo trecho em
+  // frota-lideres.js): refazer os cards a cada 5 min custava layout e
+  // repintura da vista inteira e jogava o holofote de volta ao primeiro card.
+  const assinatura = assinaturaDe(coordenadores);
+  const remontar = assinatura !== assinaturaAtual;
 
-  const totais = alvo.querySelectorAll("[data-total-coord]");
-  totais.forEach((el, i) => {
-    el.dataset.valor = coordenadores[i].qtd; // guardado para o holofote re-animar
-    animarNumero(el, coordenadores[i].qtd);
-  });
+  if (remontar) {
+    assinaturaAtual = assinatura;
+    alvo.innerHTML = coordenadores
+      .map((coord, i) => `
+        <div class="lider-card anima-surgir" style="--ordem: ${i};">
+          <div class="lider-card__nome" title="${escapar(coord.nome)}">${escapar(coord.nome)}</div>
+          <div class="colab-coord__total">
+            <span data-total-coord>0</span> colaboradores
+          </div>
+          <div class="lider-card__tipos">
+            ${coord.classes.map((classe) => `
+              <div class="lider-tipo">
+                <div class="lider-tipo__valor colab-tipo__valor" data-qtd>0</div>
+                <!-- Sigla que não esteja no mapa aparece sem o nome por extenso,
+                     em vez de sumir do painel — melhor "XYZ 4" do que esconder
+                     gente. -->
+                <div class="lider-tipo__nome">${escapar(NOMES_CLASSE[classe.nome] || "")}</div>
+                <div class="colab-tipo__sigla">${escapar(classe.nome)}</div>
+              </div>`).join("")}
+          </div>
+        </div>`)
+      .join("");
+  }
+
+  aplicarNumeros(alvo, "[data-total-coord]", coordenadores.map((c) => c.qtd), remontar);
 
   // Um querySelectorAll só na página inteira: os tiles vêm na mesma ordem em
   // que foram gerados, então a lista achatada casa com os cards em sequência.
-  const qtds = [...coordenadores.flatMap((c) => c.classes)];
-  alvo.querySelectorAll("[data-qtd]").forEach((el, i) => {
-    el.dataset.valor = qtds[i].qtd;
-    animarNumero(el, qtds[i].qtd);
-  });
+  const qtds = coordenadores.flatMap((c) => c.classes).map((k) => k.qtd);
+  aplicarNumeros(alvo, "[data-qtd]", qtds, remontar);
 
-  iniciarHolofote(alvo);
+  if (remontar) iniciarHolofote(alvo);
 }
 
 function desenharTotal(total) {
   const alvo = document.querySelector("#colaboradores-total");
-  alvo.innerHTML = `<strong data-total>0</strong> no quadro`;
-  animarNumero(alvo.querySelector("[data-total]"), total);
+  // O <strong> é criado uma vez; nas atualizações seguintes só o número muda
+  // (e só se realmente mudou — senão o total voltaria a zero a cada 5 min).
+  if (!alvo.querySelector("[data-total]")) {
+    alvo.innerHTML = `<strong data-total>0</strong> no quadro`;
+  }
+  aplicarNumeros(alvo, "[data-total]", [total]);
 }
 
 async function atualizar() {
