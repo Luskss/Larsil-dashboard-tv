@@ -6,22 +6,6 @@
   <title>Monitor de Serviços</title>
   <link rel="stylesheet" href="./tailwind.css">
   <link rel="stylesheet" href="./tema.css">
-  <script>
-    /* Ajuste da escala da interface sem editar o CSS: abra ?escala=1 (ou
-       qualquer valor) e a preferência fica salva NAQUELE navegador; ?escala=0.7
-       volta ao padrão do projeto. Serve para experimentar o enquadramento numa
-       tela específica sem afetar a TV.
-       Roda antes do primeiro paint de propósito (script síncrono no <head>),
-       senão a página apareceria na escala padrão e saltaria. */
-    (function () {
-      var daUrl = new URLSearchParams(location.search).get("escala");
-      if (daUrl !== null) localStorage.setItem("escala-ui", daUrl);
-      var escala = Number(localStorage.getItem("escala-ui"));
-      if (escala > 0 && escala !== 1) {
-        document.documentElement.style.setProperty("--escala", escala);
-      }
-    })();
-  </script>
   <style>
     /* ===== SPA: o site inteiro num único HTML (menos gestao.html) =====
        Cada "página" é uma <section class="vista"> aqui dentro e a troca é só
@@ -30,11 +14,8 @@
        a troca de vista ficam em paginacao.js. */
     /* Escala global da interface: o layout foi desenhado para a TV, então num
        monitor comum tudo fica grande demais. Em vez de mexer em cada rem/vw,
-       encolhemos a página inteira de uma vez via zoom.
-       0.7 é o valor com que o painel está calibrado em todas as telas —
-       mexer aqui muda o enquadramento de TUDO. Dá para testar outro valor sem
-       editar o arquivo, com ?escala=... (ver o script no <head>): zoom = 1
-       sai mais barato para o navegador, mas só depois de reajustar o layout. */
+       encolhemos a página inteira de uma vez via zoom. Ajuste só o número em
+       --escala (1 = 100%, 0.8 = 80%, 0.75 = 75%...). */
     :root { --escala: 0.7; }
     body { zoom: var(--escala); }
 

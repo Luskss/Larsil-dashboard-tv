@@ -23,6 +23,20 @@ const consultaMovimento = matchMedia("(prefers-reduced-motion: reduce)");
 const ativas = new Map();
 let rafId = 0;
 
+// Vista oculta não mostra número subindo — mas a contagem rodava assim mesmo.
+// Cada uma das páginas do SPA se atualiza no seu próprio intervalo, e cada
+// atualização punha ~900ms de requestAnimationFrame no ar para reescrever
+// texto dentro de um display:none. Com 7 páginas isso acontecia o tempo todo,
+// às vezes bem em cima de uma troca de página — justo o momento em que o Fire
+// Stick menos tem quadro sobrando. Fora do ar, escreve o valor direto: quando
+// a vista aparecer o número já está certo, que é o que se via antes também.
+//
+// Elemento fora de qualquer .vista (gestao.html, login) anima normalmente.
+function noAr(el) {
+  const vista = el.closest(".vista");
+  return !vista || vista.classList.contains("vista--ativa");
+}
+
 function tick(agora) {
   if (agora - ultimoQuadro < INTERVALO_QUADRO_MS) {
     rafId = requestAnimationFrame(tick);
@@ -45,9 +59,10 @@ function tick(agora) {
 }
 
 // Sobe o número do zero até o valor com ease-out (rápido no início, freia
-// no fim). Com prefers-reduced-motion, escreve o valor direto.
+// no fim). Com prefers-reduced-motion — ou com a vista fora do ar — escreve
+// o valor direto.
 export function animarNumero(el, valor, formatar = (v) => v.toLocaleString("pt-BR")) {
-  if (consultaMovimento.matches) {
+  if (consultaMovimento.matches || !noAr(el)) {
     ativas.delete(el);
     el.textContent = formatar(valor);
     return;

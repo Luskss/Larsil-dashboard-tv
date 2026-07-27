@@ -808,7 +808,14 @@ new MutationObserver(() => {
     jaAnimouNestaVisita = true;
     animarAbertura();
   }
-  if (!ativa) jaAnimouNestaVisita = false; // reanima na próxima visita
+  if (!ativa) {
+    // A abertura leva ~4,2s (giro + zoom). Se a vista sair antes disso — a
+    // rotação automática ou um clique nas bolinhas — o requestAnimationFrame
+    // continuava rodando contra um canvas em display:none, disputando quadro
+    // com a página que entrou. Corta aqui; a próxima visita reanima do zero.
+    cancelAnimationFrame(animId);
+    jaAnimouNestaVisita = false;
+  }
 }).observe(vista, { attributes: true, attributeFilter: ["class"] });
 
 atualizar();

@@ -6,22 +6,29 @@ import { montarPaginacao } from "./paginacao.js";
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // 5 minutos
 
 // ===== Relógio =====
+// O formatador é criado UMA vez, fora do tick. toLocaleTimeString monta um
+// Intl.DateTimeFormat novo a cada chamada — é a parte cara da formatação de
+// data, e aqui ela rodava uma vez por segundo, para sempre, enquanto a TV
+// estivesse ligada. Reaproveitando a instância sobra CPU para as animações.
+const FORMATO_HORA = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "America/Sao_Paulo", // a TV pode estar em outro fuso
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
 function iniciarRelogio() {
   const el = document.querySelector("#relogio");
+  let ultima = null;
 
   function tick() {
-    const agora = new Date();
-    
-    // Força o JavaScript a formatar em Brasília
-    const horaBrasilia = agora.toLocaleTimeString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false
-    });
-
-    el.textContent = horaBrasilia;
+    const hora = FORMATO_HORA.format(new Date());
+    // Escrever no DOM invalida o layout do cabeçalho; se o segundo não virou
+    // (o setInterval acorda um pouco fora do compasso), não há o que escrever.
+    if (hora === ultima) return;
+    ultima = hora;
+    el.textContent = hora;
   }
   tick();
   setInterval(tick, 1000);

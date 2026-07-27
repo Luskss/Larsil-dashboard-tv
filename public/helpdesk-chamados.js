@@ -3,7 +3,7 @@
 // o nome de quem abriu (ID_SOLICITANTE), de quem atende (ATRIBUIDO_A) e de
 // quem resolveu (RESOLVIDO_POR).
 
-import { animarNumero } from "./animacoes.js";
+import { aplicarNumeros } from "./animacoes.js";
 import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 30 * 1000; // painel de TV: atualiza quase em tempo real
@@ -77,30 +77,59 @@ function desenharCard(chamado, coluna, ordem, ehNovo) {
   </div>`;
 }
 
+// Assinatura do que está desenhado nos cards, coluna por coluna. Os
+// contadores do cabeçalho ficam de fora de propósito: eles se atualizam
+// sozinhos, sem refazer o quadro.
+function assinaturaDe(dados, idsNovos) {
+  return COLUNAS.map((coluna) =>
+    (dados.colunas?.[coluna.chave] || [])
+      .map((c) => [
+        c.id, c.prioridade, c.titulo, c.solicitante,
+        c.atribuidoA, c.resolvidoPor, c.criadoEm, c.resolvidoEm,
+        idsNovos.has(c.id) ? "novo" : "",
+      ].join(""))
+      .join("")
+  ).join("");
+}
+
+let assinaturaAtual = null;
+
 function desenharColunas(dados, idsNovos) {
   const alvo = document.querySelector("#colunas");
-  alvo.innerHTML = COLUNAS.map((coluna, i) => {
-    const chamados = dados.colunas?.[coluna.chave] || [];
-    return `<div class="painel anima-surgir" style="--ordem: ${i};">
-      <div class="coluna__titulo" style="--cor-status: ${coluna.cor};">
-        <span class="coluna__bolinha"></span>
-        <span>${coluna.rotulo}</span>
-        <span class="coluna__qtd">0</span>
-      </div>
-      <div class="coluna__cards">
-        ${chamados.length
-          ? chamados.map((c, j) => desenharCard(c, coluna, j, idsNovos.has(c.id))).join("")
-          : `<div class="coluna__vazia">Nenhum chamado</div>`}
-      </div>
-    </div>`;
-  }).join("");
 
-  // Contadores sobem contando até o total real de cada status.
-  const qtds = alvo.querySelectorAll(".coluna__qtd");
-  COLUNAS.forEach((coluna, i) => {
-    const chamados = dados.colunas?.[coluna.chave] || [];
-    animarNumero(qtds[i], dados.contagem?.[coluna.chave] ?? chamados.length);
-  });
+  // Esta é a página que mais se atualiza (30s, contra 5 min das outras) e
+  // refazer o innerHTML a cada volta era caro em dobro: destruía e recriava
+  // dezenas de cards — layout e repintura da vista inteira — e reiniciava a
+  // cascata .anima-surgir de todos eles, então quem estivesse olhando via o
+  // quadro piscar e reentrar de meio em meio minuto. Na prática quase nada
+  // muda entre duas consultas: só remonta quando algum card muda de verdade.
+  const assinatura = assinaturaDe(dados, idsNovos);
+  const remontar = assinatura !== assinaturaAtual;
+
+  if (remontar) {
+    assinaturaAtual = assinatura;
+    alvo.innerHTML = COLUNAS.map((coluna, i) => {
+      const chamados = dados.colunas?.[coluna.chave] || [];
+      return `<div class="painel anima-surgir" style="--ordem: ${i};">
+        <div class="coluna__titulo" style="--cor-status: ${coluna.cor};">
+          <span class="coluna__bolinha"></span>
+          <span>${coluna.rotulo}</span>
+          <span class="coluna__qtd">0</span>
+        </div>
+        <div class="coluna__cards">
+          ${chamados.length
+            ? chamados.map((c, j) => desenharCard(c, coluna, j, idsNovos.has(c.id))).join("")
+            : `<div class="coluna__vazia">Nenhum chamado</div>`}
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  // Contadores sobem contando até o total real de cada status — e só quando o
+  // total muda (com o HTML recém-remontado eles estão zerados, daí o `remontar`).
+  const totais = COLUNAS.map((coluna) =>
+    dados.contagem?.[coluna.chave] ?? (dados.colunas?.[coluna.chave] || []).length);
+  aplicarNumeros(alvo, ".coluna__qtd", totais, remontar);
 }
 
 // IDs de chamados já vistos na coluna "Abertos". Na primeira carga a página

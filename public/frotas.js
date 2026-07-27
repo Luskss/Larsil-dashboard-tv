@@ -2,7 +2,7 @@
 // Dados vêm de /api/frota (SQL Server, dbo.FROTA) via consultarFrota().
 
 import { consultarFrota } from "./downdetector.js";
-import { animarNumero } from "./animacoes.js";
+import { aplicarNumeros } from "./animacoes.js";
 import { observarVista } from "./visibilidade.js";
 import { escapar } from "./escape.js";
 
@@ -186,17 +186,30 @@ function conectarTooltip(alvo) {
 // Fileira abaixo da grade: um card por tipo, com o número na mesma cor da
 // fatia do donut de tipos (mesmo índice, mesma palette) — o rótulo continua
 // carregando a identidade, a cor só faz a ponte visual com o gráfico.
+let assinaturaCards = null;
+
 function desenharCardsTipos(tipos) {
   const alvo = document.querySelector("#tipos-cards");
-  let neutrosUsados = 0;
-  const proximoNeutro = () => neutrosUsados++;
-  alvo.innerHTML = (tipos || []).map((t, i) =>
-    `<div class="painel kpi anima-surgir" style="--cor-kpi: ${corDoTipo(i, proximoNeutro)}; --ordem: ${i};">
-       <div class="kpi__valor">0</div>
-       <div class="kpi__rotulo">${escapar(titulo(t.nome))}</div>
-     </div>`
-  ).join("");
-  alvo.querySelectorAll(".kpi__valor").forEach((el, i) => animarNumero(el, tipos[i].qtd));
+
+  // Só remonta quando a lista de tipos muda (mesmo raciocínio de
+  // frota-lideres.js): a cada 5 min só os números mudam, e refazer os cards
+  // custava layout + repintura da vista e reiniciava a cascata de entrada.
+  const assinatura = (tipos || []).map((t) => t.nome).join("|");
+  const remontar = assinatura !== assinaturaCards;
+
+  if (remontar) {
+    assinaturaCards = assinatura;
+    let neutrosUsados = 0;
+    const proximoNeutro = () => neutrosUsados++;
+    alvo.innerHTML = (tipos || []).map((t, i) =>
+      `<div class="painel kpi anima-surgir" style="--cor-kpi: ${corDoTipo(i, proximoNeutro)}; --ordem: ${i};">
+         <div class="kpi__valor">0</div>
+         <div class="kpi__rotulo">${escapar(titulo(t.nome))}</div>
+       </div>`
+    ).join("");
+  }
+
+  aplicarNumeros(alvo, ".kpi__valor", (tipos || []).map((t) => t.qtd), remontar);
 }
 
 // ===== Carga e atualização =====
@@ -213,9 +226,12 @@ async function atualizar() {
     dadosAtuais = dados;
     mostrarAviso("");
 
+    // Os KPIs de status são elementos fixos no HTML, então nunca passavam
+    // pelo "só se mudou" do data-valor: a cada 5 min os quatro voltavam a
+    // zero e subiam de novo, mesmo com a frota parada. aplicarNumeros guarda
+    // o valor no elemento e só re-anima o que realmente mudou.
     for (const [chave, valor] of Object.entries(dados.status)) {
-      const alvo = document.querySelector(`[data-kpi="${chave}"]`);
-      if (alvo) animarNumero(alvo, valor);
+      aplicarNumeros(document, `[data-kpi="${chave}"]`, [valor]);
     }
 
     desenharVisao();

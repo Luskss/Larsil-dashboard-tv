@@ -58,7 +58,25 @@ function pillCron(c, i) {
   `;
 }
 
+// Assinatura do que está escrito na tela. Esta página não tem número subindo:
+// ou o quadro mudou, ou não há nada a redesenhar.
+function assinaturaDe(itens) {
+  return itens
+    .map((s) => [s.nome, s.endereco, estadoDe(s), s.cron ? "cron" : "", proximaExecucaoTexto(s)].join(""))
+    .join("");
+}
+
+let assinaturaAtual = null;
+
 function desenhar(itens) {
+  // Enquanto os serviços seguem online e no mesmo horário — o caso normal —
+  // não há o que redesenhar. Antes, a cada 5 min a lista inteira era recriada
+  // e a cascata .anima-surgir recomeçava, então quem estivesse na página via
+  // tudo reentrar do nada para mostrar exatamente o mesmo status.
+  const assinatura = assinaturaDe(itens);
+  if (assinatura === assinaturaAtual) return;
+  assinaturaAtual = assinatura;
+
   // Cron é qualquer serviço com agendamento; o resto vai na lista principal.
   const crons = itens.filter((s) => s.cron);
   const servicos = itens.filter((s) => !s.cron);
