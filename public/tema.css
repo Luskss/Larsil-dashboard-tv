@@ -18,12 +18,17 @@
 }
 
 /* Tipografia maior para leitura de longe (painel de TV): o rem raiz cresce
-   com a largura da tela — 18px num notebook, ~21px numa TV Full HD, teto de
-   22px. Tudo que usa rem (inclusive as classes do Tailwind) escala junto;
+   com a largura da tela — ~16px num notebook, ~19px numa TV Full HD, teto de
+   20px. Tudo que usa rem (inclusive as classes do Tailwind) escala junto;
    os textos grandes (relógio, clima, KPIs) têm clamp próprio preso à
    largura do container (cqw) ou da tela (vw), então não vazam das boxes.
-   Controles em px (toggle, bolinhas) ficam do mesmo tamanho de propósito. */
-html { font-size: clamp(16px, 12px + 0.45vw, 22px); }
+   Controles em px (toggle, bolinhas) ficam do mesmo tamanho de propósito.
+
+   Este é o botão de "compactar": ele mexe só no que NÃO acompanha o tamanho
+   da tela (paddings, gaps, textos de apoio) — justamente o que sobra e gera
+   o scrolizinho nas listas. O que é medido em vw/vh/cqw (relógio, números
+   grandes, mapa) já é proporcional à tela e fica como está. */
+html { font-size: clamp(15px, 11px + 0.4vw, 20px); }
 
 /* O mesmo fundo vai no html além do body: durante a transição entre páginas
    (View Transitions) o navegador anima uma "foto" do body por cima, e o que
