@@ -631,6 +631,80 @@
       z-index: 2;
     }
 
+    /* ===== Carrossel (Frota por Coordenador) =====
+       Variante do holofote: em vez de espremer todos os coordenadores na
+       largura da tela, um card ocupa ~58% dela e a fileira DESLIZA para
+       trazer o próximo ao centro. Os vizinhos ficam espiando nas bordas,
+       menores e apagados, para dar a leitura de que há mais gente na fila.
+
+       Isto é também o que resolve o texto pequeno: como as fontes dos cards
+       são dimensionadas em cqw (proporção da largura do card), um card 80%
+       mais largo já traz números 80% maiores de graça. Os clamps abaixo só
+       levantam o teto, para eles não travarem no valor antigo.
+
+       Custo: continua sendo transform + opacity, as duas propriedades que o
+       compositor resolve sozinho. Nenhum quadro do deslize passa por layout
+       ou repintura — o layout acontece uma vez, quando os cards são criados.
+       Importante: as fontes NÃO entram em transição e são iguais no card em
+       foco e nos recuados. Se mudassem junto com o destaque, cada quadro do
+       deslize remediria o texto de todos eles, que é exatamente a operação
+       que este projeto passou a evitar.
+
+       O deslocamento sai de uma conta só, em CSS, a partir do índice em foco
+       (--carrossel-i, escrito pelo holofote.js). Tudo em fração da largura
+       útil da lista, então a conta é adimensional e vale em qualquer tela:
+
+         largura do card ....... k = --carrossel-k
+         vão entre cards ....... m = --carrossel-m  (metade de cada lado)
+         card i começa em ...... i*(k+m) + m/2
+         para centrá-lo ........ (1-k)/2
+         deslize ............... (1-k)/2 - i*(k+m) - m/2
+
+       translateX conta em porcentagem da largura do PRÓPRIO card (= k), daí
+       a divisão por k no fim. */
+    .lideres-lista--carrossel {
+      --carrossel-k: .58;
+      --carrossel-m: .04;
+      --carrossel-i: 0;
+      --carrossel-x: calc((
+          (1 - var(--carrossel-k)) / 2
+          - var(--carrossel-i) * (var(--carrossel-k) + var(--carrossel-m))
+          - var(--carrossel-m) / 2
+        ) / var(--carrossel-k) * 100%);
+
+      /* flex-start: com nowrap e a fileira mais larga que a caixa, "center"
+         deslocaria tudo por conta própria e a conta acima erraria o alvo. */
+      justify-content: flex-start;
+      /* A caixa recorta e NÃO se move — quem desliza são os cards. Recortar
+         um elemento que também é transformado moveria o recorte junto, e os
+         cards pareceriam parados. */
+      overflow: hidden;
+      /* O vão vira margem nos cards (ver abaixo): assim ele entra na mesma
+         conta de porcentagens do deslize. */
+      gap: 0;
+    }
+    .lideres-lista--carrossel .lider-card {
+      flex: 0 0 calc(var(--carrossel-k) * 100%);
+      margin-inline: calc(var(--carrossel-m) * 50%);
+    }
+    .lideres-lista--carrossel .lider-card.lider-card--recuado {
+      transform: translateX(var(--carrossel-x)) scale(.78);
+      opacity: .22;
+    }
+    .lideres-lista--carrossel .lider-card.lider-card--foco {
+      transform: translateX(var(--carrossel-x)) scale(1);
+      opacity: 1;
+    }
+
+    /* Tipografia do carrossel: o card é quase o dobro do de antes, então os
+       tetos dos clamps sobem junto — senão o número cresceria só até o
+       tamanho calculado para três cards lado a lado. */
+    .lideres-lista--carrossel .lider-card__nome    { font-size: clamp(1.5rem, 4.2cqw, 4rem); }
+    .lideres-lista--carrossel .lider-status__valor { font-size: clamp(2rem, 8cqw, 6.5rem); }
+    .lideres-lista--carrossel .lider-status__nome  { font-size: clamp(.8rem, 2.1cqw, 1.4rem); }
+    .lideres-lista--carrossel .lider-tipo__valor   { font-size: clamp(2.2rem, 9cqw, 7rem); }
+    .lideres-lista--carrossel .lider-tipo__nome    { font-size: clamp(.85rem, 2.4cqw, 1.5rem); }
+
     @media (prefers-reduced-motion: reduce) {
       .lider-card { transition: none; }
       .lideres-lista--foco .lider-card { will-change: auto; }

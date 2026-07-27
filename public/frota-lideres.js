@@ -111,7 +111,7 @@ function desenharLideres(lideres, total) {
 
   // Só com cards novos: reiniciar o holofote com os mesmos cards faria o
   // destaque saltar de volta para o primeiro coordenador a cada atualização.
-  if (remontar) iniciarHolofote(alvo);
+  if (remontar) iniciarHolofote(alvo, { carrossel: true });
 }
 
 async function atualizar() {

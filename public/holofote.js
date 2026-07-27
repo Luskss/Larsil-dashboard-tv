@@ -47,6 +47,11 @@ function aplicarFoco(estado) {
     card.classList.toggle("lider-card--recuado", !foco);
   });
 
+  // No modo carrossel a fileira inteira desliza para trazer o card em foco ao
+  // centro. O quanto ela anda é conta do CSS (ver .lideres-lista--carrossel em
+  // index.html): daqui só sai o índice.
+  if (estado.carrossel) estado.alvo.style.setProperty("--carrossel-i", estado.i);
+
   // A contagem é agendada à parte e cancelada se o foco mudar antes da hora —
   // senão uma troca rápida (ou a vista saindo de cena) deixaria números
   // rolando num card que já não está em destaque.
@@ -76,12 +81,17 @@ function pararCiclo(estado) {
 
 // Liga o holofote na lista `alvo`. Chame de novo a cada render: reaproveita o
 // estado (e o observador da vista) e só troca os cards, sem empilhar timers.
-export function iniciarHolofote(alvo) {
+//
+// `carrossel: true` troca o destaque no lugar (todos os cards na tela, o do
+// momento em pé e os outros recuados) por um carrossel: um card largo no
+// centro e a fileira deslizando até o próximo. É o modo da Frota por
+// Coordenador — vale quando o conteúdo do card merece a tela inteira.
+export function iniciarHolofote(alvo, { carrossel = false } = {}) {
   const cards = [...alvo.querySelectorAll(".lider-card")];
 
   let estado = estados.get(alvo);
   if (!estado) {
-    estado = { cards, timer: null, timerContagem: null, i: 0, visivel: false };
+    estado = { alvo, cards, carrossel, timer: null, timerContagem: null, i: 0, visivel: false };
     estados.set(alvo, estado);
     // Observa a vista dona desta lista uma única vez: pausa o ciclo quando ela
     // sai de cena e o retoma (do início) quando volta.
@@ -96,16 +106,21 @@ export function iniciarHolofote(alvo) {
     }
   }
   estado.cards = cards;
+  estado.carrossel = carrossel;
   estado.i = 0;
 
   // Sem graça (e sem sentido) com um card só; e respeita movimento reduzido —
   // nesses casos os cards ficam todos iguais, como antes.
   if (cards.length < 2 || matchMedia("(prefers-reduced-motion: reduce)").matches) {
     pararCiclo(estado);
-    alvo.classList.remove("lideres-lista--foco");
+    alvo.classList.remove("lideres-lista--foco", "lideres-lista--carrossel");
+    // Sem a variável a fileira volta ao lugar; sem isto, um card só ficaria
+    // deslocado pelo último índice em que o carrossel parou.
+    alvo.style.removeProperty("--carrossel-i");
     return;
   }
 
   alvo.classList.add("lideres-lista--foco");
+  alvo.classList.toggle("lideres-lista--carrossel", carrossel);
   iniciarCiclo(estado); // no-op se a vista estiver oculta; retoma ao aparecer
 }
