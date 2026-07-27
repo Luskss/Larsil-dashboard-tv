@@ -97,10 +97,14 @@ const CSS = `
     gap: .65rem;
     padding: .6rem .85rem;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    /* Sem backdrop-filter de propósito. A barra é fixa, fica sempre na tela e
+       tem a barra de rotação animando logo abaixo dela — cada quadro obrigava
+       o compositor a reamostrar e reborrar a região inteira, e a cada 30s o
+       cross-fade de página anima a tela toda por trás. Num Fire Stick isso
+       sozinho derrubava o frame rate. Fundo mais opaco dá a mesma leitura de
+       "camada sobreposta" a custo zero. */
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
     border: 1px solid var(--border);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
     z-index: 50;
     animation: paginacao-entrar .55s cubic-bezier(.22, 1.4, .36, 1) both;
   }
@@ -113,6 +117,7 @@ const CSS = `
 
   .paginacao__bolinha {
     display: block;
+    position: relative; /* âncora do halo ::after da bolinha ativa */
     width: 10px;
     height: 10px;
     padding: 0;
@@ -137,13 +142,29 @@ const CSS = `
     width: 30px;
     background: var(--success);
     opacity: 1;
-    animation: paginacao-pulso 2.4s ease-out infinite;
   }
   .paginacao__bolinha--ativa:hover { transform: none; }
+
+  /* O pulso é um halo em ::after que cresce e some, e não mais um box-shadow
+     animado: box-shadow não é compositável, então cada quadro do pulso era uma
+     repintura — de novo, para sempre, enquanto a TV estivesse ligada.
+     transform + opacity ficam só no compositor. */
+  /* Sem z-index negativo: .paginacao é position:fixed com z-index, ou seja, um
+     contexto de empilhamento — um ::after em z-index -1 sumiria atrás do fundo
+     dela. O halo é da mesma cor da pílula, então pintar por cima dá no mesmo. */
+  .paginacao__bolinha--ativa::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--success);
+    will-change: transform, opacity;
+    animation: paginacao-pulso 2.4s ease-out infinite;
+  }
   @keyframes paginacao-pulso {
-    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 50%, transparent); }
-    70%  { box-shadow: 0 0 0 9px transparent; }
-    100% { box-shadow: 0 0 0 0 transparent; }
+    0%   { opacity: .5; transform: scale(1); }
+    70%  { opacity: 0;  transform: scale(1.9); }
+    100% { opacity: 0;  transform: scale(1.9); }
   }
 
   /* O padding no rodapé garante que a barra fixa não cubra o conteúdo. */
@@ -178,13 +199,23 @@ const CSS = `
   .vista--ativa { position: relative; z-index: 1; }
 
   /* Barra da rotação automática: enche da esquerda para a direita e, ao
-     completar, a vista troca (agendarTroca cuida do tempo). */
+     completar, a vista troca (agendarTroca cuida do tempo).
+
+     Enche por scaleX, não por width: width é propriedade de LAYOUT, então
+     animá-la obriga o navegador a refazer layout + repintura em todo quadro,
+     por 30s, em loop, o tempo inteiro em que a TV está ligada — com o
+     zoom do body no meio, ainda mais caro. scaleX é transform puro: sobe
+     para uma camada do compositor e não custa quadro nenhum à CPU. Era a
+     animação mais cara do projeto, e a única que nunca parava. */
   .rotacao-progresso {
     position: fixed;
     left: 0;
     bottom: 0;
     height: 4px;
-    width: 0;
+    width: 100%;
+    transform: scaleX(0);
+    transform-origin: left center;
+    will-change: transform;
     background: var(--success);
     z-index: 60;
   }
@@ -193,6 +224,7 @@ const CSS = `
     .paginacao,
     .paginacao__bolinha,
     .paginacao__bolinha--ativa,
+    .paginacao__bolinha--ativa::after,
     .vista--ativa,
     .vista--saindo,
     body { animation: none; transition: none; }
@@ -303,12 +335,12 @@ export async function montarPaginacao() {
     const segundos = segundosRotacao();
 
     barra.style.transition = "none";
-    barra.style.width = "0";
+    barra.style.transform = "scaleX(0)";
     if (!segundos || paginas.length < 2) return;
 
-    void barra.offsetWidth; // pinta o width 0 antes de animar de novo
-    barra.style.transition = `width ${segundos}s linear`;
-    barra.style.width = "100%";
+    void barra.offsetWidth; // aplica o scaleX(0) antes de animar de novo
+    barra.style.transition = `transform ${segundos}s linear`;
+    barra.style.transform = "scaleX(1)";
 
     timer = setTimeout(() => {
       const i = paginas.indexOf(atual);

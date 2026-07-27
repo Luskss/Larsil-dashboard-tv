@@ -24,6 +24,7 @@
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 
 import express from "express";
+import compression from "compression";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -41,11 +42,18 @@ const app = express();
 // está procurando um alvo com CVE conhecida.
 app.disable("x-powered-by");
 
+// ===== Compressão =====
+// O boot do dashboard baixa ~305 KB de HTML/CSS/JS/GeoJSON — tudo texto, que
+// comprime para ~85 KB. Numa TV (Fire Stick por Wi-Fi) essa é a maior diferença
+// isolada no tempo até a primeira tela. Vem antes de todo o resto para pegar
+// também as respostas de API.
+app.use(compression());
+
 // ===== Cabeçalhos de segurança (em toda resposta) =====
-// CSP: scripts só do próprio site (Tailwind é self-hosted em /vendor, e os
-// scripts das páginas são arquivos .js — nenhum <script> inline). style-src
-// precisa de 'unsafe-inline' porque o Tailwind Browser injeta <style> em runtime
-// e as páginas usam style="..." inline. img-src data: cobre os logos em base64.
+// CSP: scripts só do próprio site (os scripts das páginas são arquivos .js —
+// nenhum <script> inline). style-src precisa de 'unsafe-inline' porque as
+// páginas trazem um <style> no head, paginacao.js injeta o CSS dele em runtime
+// e há style="..." inline. img-src data: cobre os logos em base64.
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -755,6 +763,23 @@ app.get("/api/igpm", async (_req, res) => {
 // e reaproveitado (se a conexão cair, tenta de novo depois).
 let poolSql = null;
 
+// Uma queda do banco (restart do SQL Server, blip de rede) deixava `poolSql`
+// como uma promise já resolvida apontando para um pool morto: daí em diante
+// TODAS as rotas devolviam 502 até alguém reiniciar o processo. Zerar aqui faz
+// a próxima requisição reconstruir o pool sozinha.
+function derrubarPoolSql() {
+  const morto = poolSql;
+  poolSql = null;
+  Promise.resolve(morto).then((p) => p?.close?.()).catch(() => {});
+}
+
+// Erro de conexão (vs. erro de SQL na consulta): só o primeiro justifica jogar
+// o pool fora — um GROUP BY com coluna errada não tem nada a ver com a conexão.
+function ehErroDeConexao(erro) {
+  return ["ETIMEOUT", "ESOCKET", "ECONNCLOSED", "ECONNRESET", "ENOTOPEN", "ELOGIN"]
+    .includes(erro?.code);
+}
+
 function conectarSql() {
   if (!poolSql) {
     poolSql = sql.connect({
@@ -786,6 +811,48 @@ function identificadorSql(valor, padrao) {
   return nome;
 }
 
+// ===== Cache das consultas ao banco =====
+// As telas se atualizam a cada 5 min e todas disparam juntas — no boot e depois
+// em rajada alinhada. Sem cache, cada TV ligada custa ~7 consultas a cada 5 min,
+// e as duas mais caras (/api/frota-localizacao e /api/frota-lideres) ordenam o
+// dbo.TICKET inteiro com ROW_NUMBER(). São agregações que mudam devagar: dois
+// minutos de atraso ninguém percebe num painel, e o banco para de levar rajada.
+const SQL_CACHE_MS = 2 * 60 * 1000;
+const cacheSql = new Map(); // chave -> { dados, em }
+const emVooSql = new Map(); // chave -> Promise da consulta em andamento
+
+async function comCacheSql(chave, produzir, ttlMs = SQL_CACHE_MS) {
+  const salvo = cacheSql.get(chave);
+  if (salvo && Date.now() - salvo.em < ttlMs) return salvo.dados;
+
+  // Coalescência: as vistas abrem todas no mesmo instante (e podem ser várias
+  // TVs). Sem isto, cada uma abriria a sua cópia da mesma consulta no banco.
+  const emVoo = emVooSql.get(chave);
+  if (emVoo) return emVoo;
+
+  const tarefa = (async () => {
+    try {
+      const dados = await produzir();
+      cacheSql.set(chave, { dados, em: Date.now() });
+      return dados;
+    } catch (erro) {
+      if (ehErroDeConexao(erro)) derrubarPoolSql();
+      // Painel de TV: número de dois minutos atrás é melhor que erro na tela.
+      if (salvo) {
+        const quando = new Date(salvo.em).toLocaleTimeString("pt-BR");
+        console.warn(`${chave} falhou (${erro.message}); servindo o cache de ${quando}`);
+        return salvo.dados;
+      }
+      throw erro;
+    } finally {
+      emVooSql.delete(chave);
+    }
+  })();
+
+  emVooSql.set(chave, tarefa);
+  return tarefa;
+}
+
 // Só os status "ativos" viram contador na página (decisão do Lucas):
 // os demais (SUCATA, ROUBADO, PERDA TOTAL, sem status) aparecem só no donut.
 const STATUS_TILES = {
@@ -802,49 +869,52 @@ app.get("/api/frota", async (_req, res) => {
   }
 
   try {
-    const tabela = identificadorSql(process.env.FROTA_TABELA, "dbo.FROTA");
-    const colStatus = identificadorSql(process.env.FROTA_COL_STATUS, "STATUS");
-    const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
+    const dados = await comCacheSql("frota", async () => {
+      const tabela = identificadorSql(process.env.FROTA_TABELA, "dbo.FROTA");
+      const colStatus = identificadorSql(process.env.FROTA_COL_STATUS, "STATUS");
+      const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
 
-    const pool = await conectarSql();
-    // Só bens ativos: DEVOLVIDO, VENDIDO etc. ficam fora do dashboard.
-    const ativos = "UPPER(LTRIM(RTRIM([STATUS_BEM]))) = 'ATIVO'";
-    const { recordset } = await pool.request().query(
-      `SELECT [${colStatus}] AS status, COUNT(*) AS qtd
-         FROM ${tabela}
-        WHERE ${ativos}
-        GROUP BY [${colStatus}]`
-    );
-    const consultaTipos = await pool.request().query(
-      `SELECT [${colTipo}] AS tipo, COUNT(*) AS qtd
-         FROM ${tabela}
-        WHERE ${ativos}
-        GROUP BY [${colTipo}]`
-    );
+      const pool = await conectarSql();
+      // Só bens ativos: DEVOLVIDO, VENDIDO etc. ficam fora do dashboard.
+      const ativos = "UPPER(LTRIM(RTRIM([STATUS_BEM]))) = 'ATIVO'";
+      const { recordset } = await pool.request().query(
+        `SELECT [${colStatus}] AS status, COUNT(*) AS qtd
+           FROM ${tabela}
+          WHERE ${ativos}
+          GROUP BY [${colStatus}]`
+      );
+      const consultaTipos = await pool.request().query(
+        `SELECT [${colTipo}] AS tipo, COUNT(*) AS qtd
+           FROM ${tabela}
+          WHERE ${ativos}
+          GROUP BY [${colTipo}]`
+      );
 
-    const status = { trabalhando: 0, oficina: 0, estragado: 0, semAtividade: 0 };
-    const donutMap = new Map();
-    let total = 0;
-    for (const linha of recordset) {
-      const bruto = String(linha.status ?? "").trim();
-      const chave = STATUS_TILES[bruto.toUpperCase()];
-      if (chave) status[chave] += linha.qtd;
-      // No donut, sucata também soma na fatia Estragado (como no cartão).
-      const nome = bruto.toUpperCase() === "SUCATA" ? "ESTRAGADO" : bruto || "Sem status";
-      donutMap.set(nome, (donutMap.get(nome) || 0) + linha.qtd);
-      total += linha.qtd;
-    }
+      const status = { trabalhando: 0, oficina: 0, estragado: 0, semAtividade: 0 };
+      const donutMap = new Map();
+      let total = 0;
+      for (const linha of recordset) {
+        const bruto = String(linha.status ?? "").trim();
+        const chave = STATUS_TILES[bruto.toUpperCase()];
+        if (chave) status[chave] += linha.qtd;
+        // No donut, sucata também soma na fatia Estragado (como no cartão).
+        const nome = bruto.toUpperCase() === "SUCATA" ? "ESTRAGADO" : bruto || "Sem status";
+        donutMap.set(nome, (donutMap.get(nome) || 0) + linha.qtd);
+        total += linha.qtd;
+      }
 
-    res.json({
-      total,
-      status,
-      donut: [...donutMap]
-        .map(([nome, qtd]) => ({ nome, qtd }))
-        .sort((a, b) => b.qtd - a.qtd),
-      tipos: consultaTipos.recordset
-        .map((l) => ({ nome: String(l.tipo ?? "").trim() || "Sem tipo", qtd: l.qtd }))
-        .sort((a, b) => b.qtd - a.qtd),
+      return {
+        total,
+        status,
+        donut: [...donutMap]
+          .map(([nome, qtd]) => ({ nome, qtd }))
+          .sort((a, b) => b.qtd - a.qtd),
+        tipos: consultaTipos.recordset
+          .map((l) => ({ nome: String(l.tipo ?? "").trim() || "Sem tipo", qtd: l.qtd }))
+          .sort((a, b) => b.qtd - a.qtd),
+      };
     });
+    res.json(dados);
   } catch (erro) {
     console.error("Erro ao consultar a frota:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco da frota" });
@@ -864,61 +934,64 @@ app.get("/api/frota-localizacao", async (_req, res) => {
   }
 
   try {
-    const pool = await conectarSql();
-    // rn = 1 pega o ticket mais recente por prefixo (mais recente primeiro por
-    // DATA e, no empate do dia, por ID). Descarta prefixo vazio e coords nulas.
-    const { recordset } = await pool.request().query(
-      `SELECT t.PREFIXO AS prefixo, t.PROJETO AS projeto, t.DATA AS data,
-              t.LAT AS lat, t.LON AS lon,
-              COALESCE(NULLIF(LTRIM(RTRIM(f.CLASSE_ESPECIE)), ''),
-                       NULLIF(LTRIM(RTRIM(t.CLASSE)), ''), 'Sem classe') AS classe
-         FROM (
-           SELECT PREFIXO, PROJETO, DATA, LAT, LON, CLASSE,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
-                  ) AS rn
-             FROM dbo.TICKET
-            WHERE LAT IS NOT NULL AND LON IS NOT NULL
-              AND LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
-         ) t
-         LEFT JOIN dbo.FROTA f ON f.PREFIXO = t.PREFIXO
-        WHERE t.rn = 1`
-    );
+    const dados = await comCacheSql("frota-localizacao", async () => {
+      const pool = await conectarSql();
+      // rn = 1 pega o ticket mais recente por prefixo (mais recente primeiro por
+      // DATA e, no empate do dia, por ID). Descarta prefixo vazio e coords nulas.
+      const { recordset } = await pool.request().query(
+        `SELECT t.PREFIXO AS prefixo, t.PROJETO AS projeto, t.DATA AS data,
+                t.LAT AS lat, t.LON AS lon,
+                COALESCE(NULLIF(LTRIM(RTRIM(f.CLASSE_ESPECIE)), ''),
+                         NULLIF(LTRIM(RTRIM(t.CLASSE)), ''), 'Sem classe') AS classe
+           FROM (
+             SELECT PREFIXO, PROJETO, DATA, LAT, LON, CLASSE,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
+                    ) AS rn
+               FROM dbo.TICKET
+              WHERE LAT IS NOT NULL AND LON IS NOT NULL
+                AND LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
+           ) t
+           LEFT JOIN dbo.FROTA f ON f.PREFIXO = t.PREFIXO
+          WHERE t.rn = 1`
+      );
 
-    // Agrupa por projeto: soma máquinas, guarda o centro (média das coords das
-    // frentes daquele projeto) e conta as classes para o rótulo.
-    const grupos = new Map();
-    for (const l of recordset) {
-      const projeto = String(l.projeto ?? "").trim() || "Sem projeto";
-      let g = grupos.get(projeto);
-      if (!g) {
-        g = { projeto, maquinas: 0, somaLat: 0, somaLon: 0, classes: new Map(), ultima: null };
-        grupos.set(projeto, g);
+      // Agrupa por projeto: soma máquinas, guarda o centro (média das coords das
+      // frentes daquele projeto) e conta as classes para o rótulo.
+      const grupos = new Map();
+      for (const l of recordset) {
+        const projeto = String(l.projeto ?? "").trim() || "Sem projeto";
+        let g = grupos.get(projeto);
+        if (!g) {
+          g = { projeto, maquinas: 0, somaLat: 0, somaLon: 0, classes: new Map(), ultima: null };
+          grupos.set(projeto, g);
+        }
+        g.maquinas += 1;
+        g.somaLat += l.lat;
+        g.somaLon += l.lon;
+        g.classes.set(l.classe, (g.classes.get(l.classe) || 0) + 1);
+        if (!g.ultima || new Date(l.data) > new Date(g.ultima)) g.ultima = l.data;
       }
-      g.maquinas += 1;
-      g.somaLat += l.lat;
-      g.somaLon += l.lon;
-      g.classes.set(l.classe, (g.classes.get(l.classe) || 0) + 1);
-      if (!g.ultima || new Date(l.data) > new Date(g.ultima)) g.ultima = l.data;
-    }
 
-    const pontos = [...grupos.values()]
-      .map((g) => ({
-        projeto: g.projeto,
-        maquinas: g.maquinas,
-        lat: g.somaLat / g.maquinas,
-        lon: g.somaLon / g.maquinas,
-        ultima: g.ultima,
-        classes: [...g.classes]
-          .map(([nome, qtd]) => ({ nome, qtd }))
-          .sort((a, b) => b.qtd - a.qtd),
-      }))
-      .sort((a, b) => b.maquinas - a.maquinas);
+      const pontos = [...grupos.values()]
+        .map((g) => ({
+          projeto: g.projeto,
+          maquinas: g.maquinas,
+          lat: g.somaLat / g.maquinas,
+          lon: g.somaLon / g.maquinas,
+          ultima: g.ultima,
+          classes: [...g.classes]
+            .map(([nome, qtd]) => ({ nome, qtd }))
+            .sort((a, b) => b.qtd - a.qtd),
+        }))
+        .sort((a, b) => b.maquinas - a.maquinas);
 
-    res.json({
-      total: pontos.reduce((s, p) => s + p.maquinas, 0),
-      pontos,
+      return {
+        total: pontos.reduce((s, p) => s + p.maquinas, 0),
+        pontos,
+      };
     });
+    res.json(dados);
   } catch (erro) {
     console.error("Erro ao consultar a localização da frota:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar a localização da frota" });
@@ -958,66 +1031,69 @@ app.get("/api/frota-lideres", async (_req, res) => {
   }
 
   try {
-    const tabela = identificadorSql(process.env.FROTA_TABELA, "dbo.FROTA");
-    const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
-    const colStatus = identificadorSql(process.env.FROTA_COL_STATUS, "STATUS");
-    const pool = await conectarSql();
-    const { recordset } = await pool.request().query(
-      `SELECT COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), '${SEM_COORDENADOR}') AS coordenador,
-              COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo') AS tipo,
-              f.[${colStatus}] AS status,
-              COUNT(*) AS qtd
-         FROM ${tabela} f
-         LEFT JOIN (
-           SELECT PREFIXO, COORDENADOR,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
-                  ) AS rn
-             FROM dbo.TICKET
-            WHERE LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
-         ) t ON t.PREFIXO = f.PREFIXO AND t.rn = 1
-        WHERE UPPER(LTRIM(RTRIM(f.[STATUS_BEM]))) = 'ATIVO'
-        GROUP BY COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), '${SEM_COORDENADOR}'),
-                 COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo'),
-                 f.[${colStatus}]`
-    );
+    const dados = await comCacheSql("frota-lideres", async () => {
+      const tabela = identificadorSql(process.env.FROTA_TABELA, "dbo.FROTA");
+      const colTipo = identificadorSql(process.env.FROTA_COL_TIPO, "CLASSE_ESPECIE");
+      const colStatus = identificadorSql(process.env.FROTA_COL_STATUS, "STATUS");
+      const pool = await conectarSql();
+      const { recordset } = await pool.request().query(
+        `SELECT COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), '${SEM_COORDENADOR}') AS coordenador,
+                COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo') AS tipo,
+                f.[${colStatus}] AS status,
+                COUNT(*) AS qtd
+           FROM ${tabela} f
+           LEFT JOIN (
+             SELECT PREFIXO, COORDENADOR,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY PREFIXO ORDER BY DATA DESC, ID DESC
+                    ) AS rn
+               FROM dbo.TICKET
+              WHERE LTRIM(RTRIM(ISNULL(PREFIXO, ''))) <> ''
+           ) t ON t.PREFIXO = f.PREFIXO AND t.rn = 1
+          WHERE UPPER(LTRIM(RTRIM(f.[STATUS_BEM]))) = 'ATIVO'
+          GROUP BY COALESCE(NULLIF(LTRIM(RTRIM(t.COORDENADOR)), ''), '${SEM_COORDENADOR}'),
+                   COALESCE(NULLIF(LTRIM(RTRIM(f.[${colTipo}])), ''), 'Sem tipo'),
+                   f.[${colStatus}]`
+      );
 
-    const grupos = new Map();
-    for (const l of recordset) {
-      const nome = String(l.coordenador ?? "").trim() || SEM_COORDENADOR;
-      let g = grupos.get(nome);
-      if (!g) {
-        g = {
-          nome,
-          qtd: 0,
-          status: { trabalhando: 0, oficina: 0, estragado: 0, semAtividade: 0 },
-          tipos: new Map(),
-        };
-        grupos.set(nome, g);
+      const grupos = new Map();
+      for (const l of recordset) {
+        const nome = String(l.coordenador ?? "").trim() || SEM_COORDENADOR;
+        let g = grupos.get(nome);
+        if (!g) {
+          g = {
+            nome,
+            qtd: 0,
+            status: { trabalhando: 0, oficina: 0, estragado: 0, semAtividade: 0 },
+            tipos: new Map(),
+          };
+          grupos.set(nome, g);
+        }
+        g.qtd += l.qtd;
+        g.tipos.set(l.tipo, (g.tipos.get(l.tipo) || 0) + l.qtd);
+        // Status fora do STATUS_TILES (ROUBADO, PERDA TOTAL, sem status) entra
+        // no total do coordenador, mas não vira contador — igual à página Frotas.
+        const chave = STATUS_TILES[String(l.status ?? "").trim().toUpperCase()];
+        if (chave) g.status[chave] += l.qtd;
       }
-      g.qtd += l.qtd;
-      g.tipos.set(l.tipo, (g.tipos.get(l.tipo) || 0) + l.qtd);
-      // Status fora do STATUS_TILES (ROUBADO, PERDA TOTAL, sem status) entra
-      // no total do coordenador, mas não vira contador — igual à página Frotas.
-      const chave = STATUS_TILES[String(l.status ?? "").trim().toUpperCase()];
-      if (chave) g.status[chave] += l.qtd;
-    }
 
-    const lideres = ordenarComLarsilNoCentro(
-      [...grupos.values()].map((g) => ({
-        nome: g.nome,
-        qtd: g.qtd,
-        status: g.status,
-        tipos: [...g.tipos]
-          .map(([nome, qtd]) => ({ nome, qtd }))
-          .sort((a, b) => b.qtd - a.qtd),
-      }))
-    );
+      const lideres = ordenarComLarsilNoCentro(
+        [...grupos.values()].map((g) => ({
+          nome: g.nome,
+          qtd: g.qtd,
+          status: g.status,
+          tipos: [...g.tipos]
+            .map(([nome, qtd]) => ({ nome, qtd }))
+            .sort((a, b) => b.qtd - a.qtd),
+        }))
+      );
 
-    res.json({
-      total: lideres.reduce((s, l) => s + l.qtd, 0),
-      lideres,
+      return {
+        total: lideres.reduce((s, l) => s + l.qtd, 0),
+        lideres,
+      };
     });
+    res.json(dados);
   } catch (erro) {
     console.error("Erro ao consultar a frota por líder:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar a frota por líder" });
@@ -1035,20 +1111,23 @@ app.get("/api/ativos-ti", async (_req, res) => {
   }
 
   try {
-    const pool = await conectarSql();
-    const { recordset } = await pool.request().query(
-      `SELECT [TIPO] AS tipo, COUNT(*) AS qtd
-         FROM inventario.ATIVOS
-        GROUP BY [TIPO]`
-    );
+    const dados = await comCacheSql("ativos-ti", async () => {
+      const pool = await conectarSql();
+      const { recordset } = await pool.request().query(
+        `SELECT [TIPO] AS tipo, COUNT(*) AS qtd
+           FROM inventario.ATIVOS
+          GROUP BY [TIPO]`
+      );
 
-    const contagem = new Map(
-      recordset.map((l) => [String(l.tipo ?? "").trim().toUpperCase(), l.qtd])
-    );
+      const contagem = new Map(
+        recordset.map((l) => [String(l.tipo ?? "").trim().toUpperCase(), l.qtd])
+      );
 
-    res.json({
-      tipos: TIPOS_ATIVOS_TI.map((tipo) => ({ nome: tipo, qtd: contagem.get(tipo) || 0 })),
+      return {
+        tipos: TIPOS_ATIVOS_TI.map((tipo) => ({ nome: tipo, qtd: contagem.get(tipo) || 0 })),
+      };
     });
+    res.json(dados);
   } catch (erro) {
     console.error("Erro ao consultar ativos de TI:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco de ativos de TI" });
@@ -1116,53 +1195,56 @@ app.get("/api/colaboradores", async (_req, res) => {
   }
 
   try {
-    const pool = await conectarSql();
-    const consultaClasses = await pool.request().query(
-      `SELECT UPPER(LTRIM(RTRIM(ISNULL([COORDENADOR], '')))) AS coordenador,
-              ${CLASSE_NORMALIZADA} AS classe,
-              COUNT(*) AS qtd
-         FROM dbo.COLABORADORES
-        GROUP BY UPPER(LTRIM(RTRIM(ISNULL([COORDENADOR], '')))), ${CLASSE_NORMALIZADA}`
-    );
+    const dados = await comCacheSql("colaboradores", async () => {
+      const pool = await conectarSql();
+      const consultaClasses = await pool.request().query(
+        `SELECT UPPER(LTRIM(RTRIM(ISNULL([COORDENADOR], '')))) AS coordenador,
+                ${CLASSE_NORMALIZADA} AS classe,
+                COUNT(*) AS qtd
+           FROM dbo.COLABORADORES
+          GROUP BY UPPER(LTRIM(RTRIM(ISNULL([COORDENADOR], '')))), ${CLASSE_NORMALIZADA}`
+      );
 
-    const grupos = new Map();
-    for (const l of consultaClasses.recordset) {
-      const bruto = String(l.coordenador ?? "").trim();
-      const nome = COORDENADORES_CAMPO.includes(bruto) ? bruto : SEM_COORDENADOR;
-      let g = grupos.get(nome);
-      if (!g) grupos.set(nome, (g = { nome, qtd: 0, classes: new Map() }));
-      g.qtd += l.qtd;
-      const classe = l.classe || "Sem classe";
-      g.classes.set(classe, (g.classes.get(classe) || 0) + l.qtd);
-    }
+      const grupos = new Map();
+      for (const l of consultaClasses.recordset) {
+        const bruto = String(l.coordenador ?? "").trim();
+        const nome = COORDENADORES_CAMPO.includes(bruto) ? bruto : SEM_COORDENADOR;
+        let g = grupos.get(nome);
+        if (!g) grupos.set(nome, (g = { nome, qtd: 0, classes: new Map() }));
+        g.qtd += l.qtd;
+        const classe = l.classe || "Sem classe";
+        g.classes.set(classe, (g.classes.get(classe) || 0) + l.qtd);
+      }
 
-    // O coordenador que falta cadastrar não tem linha na tabela, então não tem
-    // coordenador próprio para cair — entra no LARSIL, junto com o resto de
-    // quem está fora dos dois cards de campo.
-    const larsil = grupos.get(SEM_COORDENADOR)
-      || { nome: SEM_COORDENADOR, qtd: 0, classes: new Map() };
-    grupos.set(SEM_COORDENADOR, larsil);
-    larsil.qtd += TOTAL_AJUSTE_MANUAL;
+      // O coordenador que falta cadastrar não tem linha na tabela, então não tem
+      // coordenador próprio para cair — entra no LARSIL, junto com o resto de
+      // quem está fora dos dois cards de campo.
+      const larsil = grupos.get(SEM_COORDENADOR)
+        || { nome: SEM_COORDENADOR, qtd: 0, classes: new Map() };
+      grupos.set(SEM_COORDENADOR, larsil);
+      larsil.qtd += TOTAL_AJUSTE_MANUAL;
 
-    const coordenadores = ordenarComLarsilNoCentro(
-      [...grupos.values()].map((g) => {
-        const classes = [...g.classes].map(([nome, qtd]) => ({ nome, qtd }));
-        return {
-          nome: g.nome,
-          qtd: g.qtd,
-          // O remendo do coordenador não cadastrado só se aplica ao LARSIL;
-          // os outros cards só precisam da ordenação por tamanho.
-          classes: g.nome === SEM_COORDENADOR
-            ? aplicarAjusteManual(classes)
-            : classes.sort((a, b) => b.qtd - a.qtd),
-        };
-      })
-    );
+      const coordenadores = ordenarComLarsilNoCentro(
+        [...grupos.values()].map((g) => {
+          const classes = [...g.classes].map(([nome, qtd]) => ({ nome, qtd }));
+          return {
+            nome: g.nome,
+            qtd: g.qtd,
+            // O remendo do coordenador não cadastrado só se aplica ao LARSIL;
+            // os outros cards só precisam da ordenação por tamanho.
+            classes: g.nome === SEM_COORDENADOR
+              ? aplicarAjusteManual(classes)
+              : classes.sort((a, b) => b.qtd - a.qtd),
+          };
+        })
+      );
 
-    res.json({
-      total: coordenadores.reduce((s, c) => s + c.qtd, 0),
-      coordenadores,
+      return {
+        total: coordenadores.reduce((s, c) => s + c.qtd, 0),
+        coordenadores,
+      };
     });
+    res.json(dados);
   } catch (erro) {
     console.error("Erro ao consultar colaboradores:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco de colaboradores" });
@@ -1183,49 +1265,54 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
   }
 
   try {
-    const pool = await conectarSql();
-    const statusIn = STATUS_HELPDESK.map((s) => `'${s}'`).join(", ");
+    // Cache mais curto que o resto: aqui a tela destaca chamado novo (ver
+    // .chamado--novo / o toast no index.html), então atraso se nota.
+    const dados = await comCacheSql("helpdesk-chamados", async () => {
+      const pool = await conectarSql();
+      const statusIn = STATUS_HELPDESK.map((s) => `'${s}'`).join(", ");
 
-    // ROW_NUMBER por status: cada coluna recebe seus N chamados mais recentes
-    // (resolvidos ordenam por RESOLVIDO_EM; os demais, por CRIADO_EM).
-    const { recordset } = await pool.request().query(
-      `SELECT id, titulo, prioridade, status, criadoEm, resolvidoEm, solicitante, atribuidoA, resolvidoPor
-         FROM (
-           SELECT c.ID AS id, c.TITULO AS titulo, c.PRIORIDADE AS prioridade,
-                  UPPER(LTRIM(RTRIM(c.STATUS))) AS status,
-                  c.CRIADO_EM AS criadoEm, c.RESOLVIDO_EM AS resolvidoEm,
-                  usol.NOME AS solicitante, ua.NOME AS atribuidoA, ur.NOME AS resolvidoPor,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY UPPER(LTRIM(RTRIM(c.STATUS)))
-                    ORDER BY COALESCE(c.RESOLVIDO_EM, c.CRIADO_EM) DESC
-                  ) AS rn
-             FROM dbo.HELPDESK_CHAMADOS c
-             LEFT JOIN dbo.HELPDESK_USUARIOS usol ON usol.ID = c.ID_SOLICITANTE
-             LEFT JOIN dbo.HELPDESK_USUARIOS ua ON ua.ID = c.ATRIBUIDO_A
-             LEFT JOIN dbo.HELPDESK_USUARIOS ur ON ur.ID = c.RESOLVIDO_POR
-            WHERE UPPER(LTRIM(RTRIM(c.STATUS))) IN (${statusIn})
-         ) t
-        WHERE t.rn <= ${CHAMADOS_POR_COLUNA}
-        ORDER BY COALESCE(resolvidoEm, criadoEm) DESC`
-    );
+      // ROW_NUMBER por status: cada coluna recebe seus N chamados mais recentes
+      // (resolvidos ordenam por RESOLVIDO_EM; os demais, por CRIADO_EM).
+      const { recordset } = await pool.request().query(
+        `SELECT id, titulo, prioridade, status, criadoEm, resolvidoEm, solicitante, atribuidoA, resolvidoPor
+           FROM (
+             SELECT c.ID AS id, c.TITULO AS titulo, c.PRIORIDADE AS prioridade,
+                    UPPER(LTRIM(RTRIM(c.STATUS))) AS status,
+                    c.CRIADO_EM AS criadoEm, c.RESOLVIDO_EM AS resolvidoEm,
+                    usol.NOME AS solicitante, ua.NOME AS atribuidoA, ur.NOME AS resolvidoPor,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY UPPER(LTRIM(RTRIM(c.STATUS)))
+                      ORDER BY COALESCE(c.RESOLVIDO_EM, c.CRIADO_EM) DESC
+                    ) AS rn
+               FROM dbo.HELPDESK_CHAMADOS c
+               LEFT JOIN dbo.HELPDESK_USUARIOS usol ON usol.ID = c.ID_SOLICITANTE
+               LEFT JOIN dbo.HELPDESK_USUARIOS ua ON ua.ID = c.ATRIBUIDO_A
+               LEFT JOIN dbo.HELPDESK_USUARIOS ur ON ur.ID = c.RESOLVIDO_POR
+              WHERE UPPER(LTRIM(RTRIM(c.STATUS))) IN (${statusIn})
+           ) t
+          WHERE t.rn <= ${CHAMADOS_POR_COLUNA}
+          ORDER BY COALESCE(resolvidoEm, criadoEm) DESC`
+      );
 
-    // Total por status (as colunas mostram só os recentes; o contador, tudo).
-    const totais = await pool.request().query(
-      `SELECT UPPER(LTRIM(RTRIM(STATUS))) AS status, COUNT(*) AS qtd
-         FROM dbo.HELPDESK_CHAMADOS
-        WHERE UPPER(LTRIM(RTRIM(STATUS))) IN (${statusIn})
-        GROUP BY UPPER(LTRIM(RTRIM(STATUS)))`
-    );
+      // Total por status (as colunas mostram só os recentes; o contador, tudo).
+      const totais = await pool.request().query(
+        `SELECT UPPER(LTRIM(RTRIM(STATUS))) AS status, COUNT(*) AS qtd
+           FROM dbo.HELPDESK_CHAMADOS
+          WHERE UPPER(LTRIM(RTRIM(STATUS))) IN (${statusIn})
+          GROUP BY UPPER(LTRIM(RTRIM(STATUS)))`
+      );
 
-    const colunas = Object.fromEntries(STATUS_HELPDESK.map((s) => [s, []]));
-    for (const linha of recordset) colunas[linha.status]?.push(linha);
+      const colunas = Object.fromEntries(STATUS_HELPDESK.map((s) => [s, []]));
+      for (const linha of recordset) colunas[linha.status]?.push(linha);
 
-    const contagem = Object.fromEntries(STATUS_HELPDESK.map((s) => [s, 0]));
-    for (const linha of totais.recordset) {
-      if (linha.status in contagem) contagem[linha.status] = linha.qtd;
-    }
+      const contagem = Object.fromEntries(STATUS_HELPDESK.map((s) => [s, 0]));
+      for (const linha of totais.recordset) {
+        if (linha.status in contagem) contagem[linha.status] = linha.qtd;
+      }
 
-    res.json({ colunas, contagem });
+      return { colunas, contagem };
+    }, 30 * 1000);
+    res.json(dados);
   } catch (erro) {
     console.error("Erro ao consultar os chamados do helpdesk:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco do helpdesk" });

@@ -1,0 +1,6 @@
+/* Fonte do build estático do Tailwind (ver `npm run build`). Substitui o
+   runtime `vendor/tailwind-browser.js`, que recompilava CSS no navegador via
+   MutationObserver a cada mudança de classe — caro demais para o Fire Stick.
+   Detecção de conteúdo automática do v4 varre o projeto (respeitando
+   .gitignore) atrás das classes usadas em public/*.html e public/*.js. */
+@import "tailwindcss";

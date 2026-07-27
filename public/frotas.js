@@ -3,6 +3,7 @@
 
 import { consultarFrota } from "./downdetector.js";
 import { animarNumero } from "./animacoes.js";
+import { observarVista } from "./visibilidade.js";
 import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do dashboard
@@ -245,4 +246,21 @@ function alternarVisao() {
 
 atualizar();
 setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
-setInterval(alternarVisao, INTERVALO_TROCA_MS);
+
+// A alternância status <-> tipos redesenha o donut (SVG) a cada 30s. Só faz
+// sentido com a vista no ar: escondida, ninguém vê a troca e ela só rouba
+// quadros da aba que o usuário está olhando. O fetch (atualizar) segue
+// rodando, para os dados não ficarem velhos ao voltar. Ao reaparecer,
+// redesenha a visão atual e retoma a alternância.
+let trocaTimer = null;
+observarVista("vista-frotas", {
+  aoEntrar() {
+    desenharVisao();
+    clearInterval(trocaTimer);
+    trocaTimer = setInterval(alternarVisao, INTERVALO_TROCA_MS);
+  },
+  aoSair() {
+    clearInterval(trocaTimer);
+    trocaTimer = null;
+  },
+});

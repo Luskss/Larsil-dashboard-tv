@@ -5,13 +5,19 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "build": "tailwindcss -i ./src/tailwind.css -o ./public/tailwind.css --minify",
     "start": "node server.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "compression": "^1.8.1",
     "express": "^4.21.2",
     "mssql": "^12.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
   }
 }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Monitor de Serviços</title>
-  <script src="./vendor/tailwind-browser.js"></script>
+  <link rel="stylesheet" href="./tailwind.css">
   <link rel="stylesheet" href="./tema.css">
   <style>
     /* ===== SPA: o site inteiro num único HTML (menos gestao.html) =====
@@ -477,15 +477,18 @@
          ganha um leve zoom e destaque; os demais recuam e escurecem.
          flex-basis também entra na transição para a PRIMEIRA ativação partir do
          visual atual (Frota parada em basis clamp, Colaboradores em terços
-         iguais) em vez de colapsar antes do flex-grow subir de 0. */
+         iguais) em vez de colapsar antes do flex-grow subir de 0.
+         box-shadow ficou FORA da transição: o holofote já anima flex-grow e
+         flex-basis, que refazem o layout da fileira inteira a cada quadro por
+         0.8s, a cada 4.5s. Somar a isso um box-shadow em transição obrigava
+         uma repintura por cima de cada um desses quadros. A sombra entra de
+         uma vez, sob o movimento — na prática não se percebe. */
       transition:
         flex-grow .8s cubic-bezier(.22, 1, .36, 1),
         flex-basis .8s cubic-bezier(.22, 1, .36, 1),
         transform .8s cubic-bezier(.22, 1, .36, 1),
         opacity .6s ease,
-        filter .6s ease,
-        border-color .6s ease,
-        box-shadow .6s ease;
+        border-color .6s ease;
     }
     .lider-card__nome {
       font-size: clamp(1.35rem, 3.5cqw, 2.2rem);
@@ -588,11 +591,13 @@
        usa wrap + basis em clamp(), os Colaboradores nowrap + flex:1 1 0. A
        especificidade extra (.lider-card.lider-card--foco) é de propósito, para
        ganhar do `flex: 1 1 0` de .colab-coordenadores .lider-card. */
+    /* Cards recuados: só opacidade + escala (ambas compostas na GPU, sem
+       repaint). Evita de propósito filter/blur, que num navegador de TV fraco
+       (Silk/Fire TV) forçam repintura e derrubam o frame rate. */
     .lideres-lista--foco .lider-card.lider-card--recuado {
       flex: .75 1 0;
       transform: scale(.94);
       opacity: .32;
-      filter: saturate(.55);
     }
     .lideres-lista--foco .lider-card.lider-card--foco {
       flex: 2.6 1 0;
@@ -769,9 +774,11 @@
     .mapa-rotulo {
       position: absolute;
       transform: translateX(-50%);
-      background: color-mix(in srgb, black 55%, transparent);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
+      /* Sem backdrop-filter: existe um rótulo por frente de trabalho, então
+         eram N regiões borradas simultâneas — e todas ficam por cima do canvas
+         do mapa, que anima transform no giro/zoom de abertura. Cada quadro da
+         abertura reborrava todas. Fundo mais opaco entrega a mesma leitura. */
+      background: color-mix(in srgb, black 82%, transparent);
       border: 1px solid var(--border);
       border-radius: .6rem;
       padding: .3rem .55rem;
@@ -1222,17 +1229,38 @@
       pointer-events: none;
     }
     .toast-novos--visivel { transform: translateY(0); opacity: 1; }
+    /* O pulso é um halo em ::after (transform + opacity, só compositor) e não
+       um box-shadow animado, que repinta a cada quadro. E só roda com o toast
+       na tela: escondido ele fica apenas deslocado por transform, continua
+       renderizado, e o box-shadow infinito seguia repintando fora de vista. */
     .toast-novos__bolinha {
+      position: relative;
       width: 10px; height: 10px;
       border-radius: 999px;
       background: var(--critical);
       flex: 0 0 auto;
-      animation: chamado-brilho 1.6s ease-out infinite;
+    }
+    /* Sem z-index negativo: .toast-novos é position:fixed com z-index, ou seja,
+       um contexto de empilhamento — o halo sumiria atrás do fundo do toast.
+       Ele é da mesma cor do ponto, então pintar por cima dá no mesmo. */
+    .toast-novos--visivel .toast-novos__bolinha::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: var(--critical);
+      will-change: transform, opacity;
+      animation: toast-pulso 1.6s ease-out infinite;
+    }
+    @keyframes toast-pulso {
+      0%   { opacity: .7; transform: scale(1); }
+      60%  { opacity: 0;  transform: scale(2.6); }
+      100% { opacity: 0;  transform: scale(2.6); }
     }
     @media (prefers-reduced-motion: reduce) {
       .chamado--novo { animation: none; }
       .toast-novos { transition: opacity .2s ease; transform: none; }
-      .toast-novos__bolinha { animation: none; }
+      .toast-novos--visivel .toast-novos__bolinha::after { animation: none; }
     }
   </style>
 </head>

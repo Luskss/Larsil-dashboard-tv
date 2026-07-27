@@ -21,15 +21,26 @@ async function ler() {
   }
 }
 
-// Serializa as escritas: como o Express pode processar requisições
-// concorrentes, encadeamos as gravações numa fila para não corromper o JSON.
+// Serializa o ciclo INTEIRO de ler-modificar-gravar, não só a gravação: como o
+// Express atende requisições concorrentes, dois POSTs simultâneos liam o mesmo
+// estado antigo e o segundo sobrescrevia a alteração do primeiro (salvar a
+// cidade e a ordem das páginas junto perdia uma das duas). Com a fila em volta
+// do ciclo todo, o segundo só lê depois que o primeiro já gravou.
+//
+// `mudar` recebe o objeto lido e o altera no lugar.
 let fila = Promise.resolve();
-async function escrever(dados) {
-  fila = fila.then(async () => {
+async function atualizar(mudar) {
+  // O segundo argumento faz a fila seguir mesmo se a tarefa anterior falhar —
+  // senão um erro de disco travaria todas as gravações seguintes.
+  fila = fila.then(tarefa, tarefa);
+  return fila;
+
+  async function tarefa() {
+    const dados = await ler();
+    mudar(dados);
     await mkdir(dirname(DATA_FILE), { recursive: true });
     await writeFile(DATA_FILE, JSON.stringify(dados, null, 2), "utf8");
-  });
-  return fila;
+  }
 }
 
 export async function listarServicos() {
@@ -37,9 +48,9 @@ export async function listarServicos() {
 }
 
 export async function salvarServicos(servicos) {
-  const dados = await ler();
-  dados.servicos = Array.isArray(servicos) ? servicos : [];
-  await escrever(dados);
+  await atualizar((dados) => {
+    dados.servicos = Array.isArray(servicos) ? servicos : [];
+  });
 }
 
 export async function getConfig(chave) {
@@ -47,9 +58,9 @@ export async function getConfig(chave) {
 }
 
 export async function setConfig(chave, valor) {
-  const dados = await ler();
-  dados.config[chave] = valor;
-  await escrever(dados);
+  await atualizar((dados) => {
+    dados.config[chave] = valor;
+  });
 }
 
 // ===== Tokens do Railway =====
@@ -61,9 +72,9 @@ export async function listarRailway() {
 }
 
 export async function salvarRailway(itens) {
-  const dados = await ler();
-  dados.railway = Array.isArray(itens) ? itens : [];
-  await escrever(dados);
+  await atualizar((dados) => {
+    dados.railway = Array.isArray(itens) ? itens : [];
+  });
 }
 
 // ===== Páginas do dashboard (ordem e visibilidade da rotação) =====
@@ -81,7 +92,7 @@ export async function getPaginas() {
 }
 
 export async function salvarPaginas({ ordem, visiveis }) {
-  const dados = await ler();
-  dados.paginas = { ordem, visiveis };
-  await escrever(dados);
+  await atualizar((dados) => {
+    dados.paginas = { ordem, visiveis };
+  });
 }
