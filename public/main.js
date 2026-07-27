@@ -81,16 +81,32 @@ function renderTiles() {
     const colunas = estilo.gridTemplateColumns.split(" ").filter(Boolean).length || 1;
     const gap = parseFloat(estilo.rowGap) || 16;
     const larguraCelula = medidor.offsetWidth || 90;
+
+    // O body inteiro tem zoom: var(--escala) (ver index.html). Só ISTO já
+    // rendia o painel curto: offsetWidth/getComputedStyle relatam o tamanho
+    // "de projeto" (antes do zoom), mas getBoundingClientRect() e
+    // window.innerHeight relatam o tamanho JÁ ENCOLHIDO na tela — é o mesmo
+    // quirk do Chromium que faz clientX de mouse bater com getBoundingClientRect
+    // e não com offsetWidth. Misturando os dois, "disponivel" saía pequeno
+    // demais e a grade nunca passava do mínimo de 6 fileiras, sobrando um
+    // vão enorme embaixo até as bolinhas de navegação.
+    //
+    // Em vez de assumir qual API é qual (muda entre motor de navegador — o
+    // Fire Stick roda um Chromium mais antigo), mede a proporção comparando
+    // o MESMO elemento pelas duas APIs, e usa essa proporção para trazer
+    // tudo para o espaço "de projeto" (o mesmo de --escala, larguraCelula e
+    // do padding computado abaixo).
+    const fator = medidor.getBoundingClientRect().width / larguraCelula || 1;
     medidor.remove();
 
     // Espaço útil entre o topo da grade e o fim da janela. A reserva
     // embaixo é o padding real do body (guarda o lugar das bolinhas de
     // navegação, ver paginacao.js) + o padding do container da página.
-    const topo = tilesEl.getBoundingClientRect().top;
+    const topo = tilesEl.getBoundingClientRect().top / fator;
     const reserva =
       (parseFloat(getComputedStyle(document.body).paddingBottom) || 0) +
       (parseFloat(getComputedStyle(tilesEl.parentElement).paddingBottom) || 0);
-    const disponivel = window.innerHeight - topo - reserva;
+    const disponivel = window.innerHeight / fator - topo - reserva;
 
     // Célula sempre quadrada: a altura da fileira é a largura da coluna.
     const alturaCelula = Math.max(40, larguraCelula);
