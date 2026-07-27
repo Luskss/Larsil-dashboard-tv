@@ -93,7 +93,12 @@ function desenharCoordenadores(coordenadores) {
   const qtds = coordenadores.flatMap((c) => c.classes).map((k) => k.qtd);
   aplicarNumeros(alvo, "[data-qtd]", qtds, remontar);
 
-  if (remontar) iniciarHolofote(alvo);
+  // Mesmo modo da Frota por Coordenador: um por vez, na tela inteira. Além de
+  // caber mais informação, é a animação barata — os cards ficam empilhados e a
+  // troca é só opacidade, resolvida no compositor. A alternativa que os três
+  // lado a lado pediam (o card em destaque ficar mais largo) refaria o layout
+  // da fileira a cada quadro.
+  if (remontar) iniciarHolofote(alvo, { carrossel: true });
 }
 
 function desenharTotal(total) {

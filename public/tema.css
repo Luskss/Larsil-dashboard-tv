@@ -46,6 +46,30 @@ body {
   color: var(--text);
 }
 
+/* ===== Barras de rolagem =====
+   Sem isto o Chrome desenha a barra CLARA do sistema dentro de um site todo
+   escuro. Ela aparece nas listas que rolam e, principalmente, pisca na troca
+   de vistas: a vista que entra sai de display:none, e até o JS remedir (o
+   resize disparado em paginacao.js) o navegador acha por alguns quadros que
+   o conteúdo estoura, desenha a barra e a apaga logo em seguida — é o
+   risquinho branco que aparece na transição.
+
+   As duas sintaxes convivem de propósito: scrollbar-color é o padrão novo
+   (Chrome 121+), ::-webkit-scrollbar é o que o Chromium mais velho do Fire
+   Stick entende. Quem suporta a primeira ignora a segunda. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+::-webkit-scrollbar-corner { background: transparent; }
+
 /* ===== Animações compartilhadas =====
    .anima-surgir: entrada em cascata — defina --ordem no elemento para o
    atraso (60ms por passo). .anima-pop: escala suave ao aparecer (donut).
@@ -58,8 +82,24 @@ body {
   from { opacity: 0; transform: scale(.94); }
   to   { opacity: 1; transform: none; }
 }
+/* fill-mode `backwards`, NÃO `both`. A diferença parece detalhe e não é: com
+   `both` a animação também preenche para a FRENTE, isto é, continua impondo o
+   último quadro (opacity: 1; transform: none) depois de terminada — para
+   sempre, porque a animação nunca é removida do elemento. E declarações de
+   animação ganham de regras normais no cascade.
+
+   O efeito prático: qualquer opacity ou transform que outra regra tentasse
+   aplicar naquele elemento era silenciosamente ignorada. Foi o que manteve o
+   holofote quebrado — os cards recebiam .holofote--recuado direitinho, mas
+   o `opacity: 0` (e antes o translateX, e antes disso o scale) nunca chegava
+   a valer, então o coordenador em destaque mudava sem que a tela mudasse.
+
+   `backwards` preenche só para trás: segura o primeiro quadro durante o
+   animation-delay (é o que faz a cascata funcionar) e SOLTA o elemento ao
+   terminar. Não se perde nada visualmente, porque o último quadro destas duas
+   animações é exatamente o estado natural do elemento. */
 .anima-surgir {
-  animation: surgir .5s cubic-bezier(.22, 1, .36, 1) both;
+  animation: surgir .5s cubic-bezier(.22, 1, .36, 1) backwards;
   /* O atraso tem teto. Cada elemento com a cascata pendente é uma camada
      esperando para animar; numa lista de 8 cards o último só começava depois
      de 480ms, prolongando por quase um segundo o momento mais pesado da tela
@@ -67,7 +107,7 @@ body {
      5 passos a cascata continua legível e todo mundo termina junto. */
   animation-delay: calc(min(var(--ordem, 0), 5) * 55ms);
 }
-.anima-pop { animation: pop .45s cubic-bezier(.22, 1, .36, 1) both; }
+.anima-pop { animation: pop .45s cubic-bezier(.22, 1, .36, 1) backwards; }
 @media (prefers-reduced-motion: reduce) {
   .anima-surgir, .anima-pop { animation: none; }
 }

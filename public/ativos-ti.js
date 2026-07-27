@@ -2,6 +2,7 @@
 // Starlinks). Dados vêm de /api/ativos-ti (SQL Server, inventario.ATIVOS).
 
 import { aplicarNumeros } from "./animacoes.js";
+import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
@@ -16,6 +17,33 @@ const ROTULOS = {
   CELULAR: "Celulares",
   STARLINK: "Starlinks",
 };
+
+// Ilustração de cada tipo, em public/img/info. São PNGs de arte branca sobre
+// fundo transparente, que é o que faz elas caírem bem no painel escuro sem
+// precisar de tratamento nenhum.
+//
+// A largura vai junto só para o navegador saber a proporção ANTES de baixar a
+// imagem e já reservar o espaço certo: sem isso o ícone chega depois e empurra
+// o número para baixo, um solavanco no meio da tela. Todas têm 400px de
+// altura. Se um dia alguém trocar um PNG por outro de proporção diferente, o
+// número aqui só causa um ajuste no primeiro quadro — quem manda de verdade é
+// o object-fit no CSS.
+const ICONES = {
+  NOTEBOOK: { arquivo: "laptop", largura: 640 },
+  MONITOR: { arquivo: "monitor", largura: 453 },
+  CELULAR: { arquivo: "celular", largura: 199 },
+  STARLINK: { arquivo: "starlink", largura: 993 },
+};
+
+// alt vazio: o rótulo logo abaixo já diz o que é, então a imagem é decorativa.
+// Tipo sem ícone mapeado simplesmente não ganha imagem, em vez de virar um
+// quadrado de imagem quebrada.
+function iconeDe(nome) {
+  const icone = ICONES[nome];
+  if (!icone) return "";
+  return `<img class="kpi__icone" src="/img/info/${icone.arquivo}.png" alt=""
+               width="${icone.largura}" height="400" decoding="async">`;
+}
 
 function mostrarAviso(mensagem) {
   const aviso = document.querySelector("#ativos-aviso");
@@ -42,11 +70,21 @@ function desenharCards(tipos) {
       `<div class="painel kpi anima-surgir" style="--cor-kpi: ${CORES_TIPOS[i % CORES_TIPOS.length]}; --ordem: ${i};">
          <div class="kpi__valor">0</div>
          <div class="kpi__rotulo">${escapar(ROTULOS[t.nome] || t.nome)}</div>
+         ${iconeDe(t.nome)}
        </div>`
     ).join("");
   }
 
   aplicarNumeros(alvo, ".kpi__valor", tipos.map((t) => t.qtd), remontar);
+
+  // Rodízio de destaque entre os quatro painéis. Depois do aplicarNumeros de
+  // propósito: é ele que grava o data-valor de cada número, e é de lá que o
+  // holofote relê para fazer a contagem subir de novo no painel da vez.
+  // Só com cards novos, senão o destaque saltaria de volta ao primeiro a cada
+  // atualização de 5 min.
+  if (remontar) {
+    iniciarHolofote(alvo, { item: ".kpi", classeLista: "ativos-grid--foco" });
+  }
 }
 
 let dadosAtuais = null;
