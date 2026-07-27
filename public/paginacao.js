@@ -174,42 +174,30 @@ const CSS = `
   /* O padding no rodapé garante que a barra fixa não cubra o conteúdo. */
   body { padding-bottom: 4.5rem; }
 
-  /* ===== Transição entre páginas (cross-fade com deslize) =====
-     A vista que ENTRA anima com pagina-entrar (aplicada em .vista--ativa, no
-     CSS do index.html); a que SAI recebe .vista--saindo do JS, fica sobreposta
-     (position fixed) e apaga por baixo. As duas rodam juntas. Como cada vista
-     é transparente sobre o fundo do site, não há flash branco.
+  /* ===== Transição entre páginas =====
+     Só a vista que ENTRA anima (pagina-entrar, aplicada em .vista--ativa no
+     CSS do index.html): ela aparece deslizando sobre o fundo do site.
 
-     Só a vista que ENTRA desliza. A que sai apaga sem transform de propósito:
-     são duas camadas do tamanho da tela sobrepostas, e deslocar uma camada de
-     1080p por uma fração de pixel obriga a GPU a reamostrar a textura inteira
-     a cada quadro — num Fire Stick é justamente o que falta (fill rate). Só
-     mudar o alfa é praticamente de graça, e o deslize de quem entra já dá
-     sozinho a leitura de direção.
-     A saída também é mais curta que a entrada: a janela em que as duas
-     camadas convivem encolhe, e o fim da transição fica com uma camada só. */
+     A que sai simplesmente deixa de ser exibida. Já houve aqui um cross-fade
+     em que ela ganhava .vista--saindo, virava position:fixed sobre a tela e
+     apagava por baixo — e ele trazia dois defeitos visíveis a cada troca:
+
+     1. Salto de alinhamento. Ao sair do fluxo, a caixa da vista deixava de ser
+        a área de conteúdo do body (que desconta o rodapé de 4.5rem) e o
+        conteúdo se reposicionava no primeiro quadro da animação.
+     2. Bordas brancas. É a mesma armadilha que fez este projeto descartar as
+        View Transitions (ver o comentário em ativar()): com o zoom do body no
+        meio, criar um elemento fixed em cima da tela faz o navegador pintar
+        áreas do canvas que ele ainda não rasterizou.
+
+     Sem sobreposição os dois desaparecem — e é também o caminho mais barato:
+     uma única camada animando em vez de duas do tamanho da tela, o que num
+     Fire Stick é exatamente o recurso que falta (fill rate). O deslize de
+     quem entra já dá sozinho a leitura de direção. */
   @keyframes pagina-entrar {
     from { opacity: 0; transform: translateX(3%); }
     to   { opacity: 1; transform: none; }
   }
-  @keyframes pagina-sair {
-    from { opacity: 1; }
-    to   { opacity: 0; }
-  }
-  .vista--saindo {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    position: fixed;
-    inset: 0;
-    z-index: 0;             /* fica atrás da vista que entra */
-    pointer-events: none;
-    /* Sobe para uma camada própria do compositor já no 1º frame, para o
-       navegador não precisar repintar a tela ao criar a camada no meio. */
-    will-change: opacity;
-    animation: pagina-sair .22s ease-out both;
-  }
-  .vista--ativa { position: relative; z-index: 1; }
 
   /* Barra da rotação automática: enche da esquerda para a direita e, ao
      completar, a vista troca (agendarTroca cuida do tempo).
@@ -239,7 +227,6 @@ const CSS = `
     .paginacao__bolinha--ativa,
     .paginacao__bolinha--ativa::after,
     .vista--ativa,
-    .vista--saindo,
     body { animation: none; transition: none; }
   }
 
@@ -293,39 +280,15 @@ export async function montarPaginacao() {
   let aplicada = null; // assinatura da configuração já em uso
 
   function ativar(pagina) {
-    const anterior = atual;
     atual = pagina;
 
-    const reduzMovimento = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // A vista anterior não some de imediato: ganha .vista--saindo (fica
-    // sobreposta, animando a saída) enquanto a nova entra por cima — as duas
-    // animam juntas. Como cada vista é transparente sobre o fundo do site, o
-    // cross-fade nunca mostra branco. (Não usamos View Transitions porque o
-    // zoom da página faz o navegador renderizar a "foto" da transição com
-    // áreas brancas.)
-    const anteriorEl = anterior && anterior !== pagina && !reduzMovimento
-      ? document.getElementById(anterior.vista)
-      : null;
-
+    // Só a vista nova anima (ver o bloco "Transição entre páginas" no CSS): a
+    // anterior perde .vista--ativa e volta a display:none na mesma hora.
+    // Nada de sobrepor a antiga em position:fixed nem de View Transitions —
+    // as duas coisas, com o zoom do body no meio, fazem o navegador pintar
+    // áreas brancas no lugar do que ainda não rasterizou.
     for (const p of existentes) {
-      const el = document.getElementById(p.vista);
-      if (p === pagina) {
-        el.classList.remove("vista--saindo");
-        el.classList.add("vista--ativa");
-      } else if (el === anteriorEl) {
-        el.classList.remove("vista--ativa");
-        el.classList.add("vista--saindo");
-        const limpar = () => {
-          el.classList.remove("vista--saindo");
-          el.removeEventListener("animationend", limpar);
-          clearTimeout(reserva);
-        };
-        el.addEventListener("animationend", limpar);
-        // Rede de segurança: se animationend não disparar, esconde mesmo assim.
-        const reserva = setTimeout(limpar, 600);
-      } else {
-        el.classList.remove("vista--ativa", "vista--saindo");
-      }
+      document.getElementById(p.vista).classList.toggle("vista--ativa", p === pagina);
     }
 
     bolinhas.forEach((bolinha, i) => {

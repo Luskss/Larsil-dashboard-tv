@@ -7,10 +7,12 @@
   <link rel="stylesheet" href="./tailwind.css">
   <link rel="stylesheet" href="./tema.css">
   <script>
-    /* Escala da interface. Roda antes do primeiro paint de propósito (script
-       síncrono no <head>), senão a página apareceria em 100% e saltaria.
-       Uso: abra ?escala=0.7 uma vez no monitor de trabalho; ?escala=1 desfaz.
-       A TV nunca recebe o parâmetro e fica em 1 — sem custo de zoom. */
+    /* Ajuste da escala da interface sem editar o CSS: abra ?escala=1 (ou
+       qualquer valor) e a preferência fica salva NAQUELE navegador; ?escala=0.7
+       volta ao padrão do projeto. Serve para experimentar o enquadramento numa
+       tela específica sem afetar a TV.
+       Roda antes do primeiro paint de propósito (script síncrono no <head>),
+       senão a página apareceria na escala padrão e saltaria. */
     (function () {
       var daUrl = new URLSearchParams(location.search).get("escala");
       if (daUrl !== null) localStorage.setItem("escala-ui", daUrl);
@@ -27,14 +29,13 @@
        (Amazon Silk) não aparecer a cada troca. Bolinhas, rotação automática e
        a troca de vista ficam em paginacao.js. */
     /* Escala global da interface: o layout foi desenhado para a TV, então num
-       monitor comum tudo fica grande demais e encolhemos a página inteira de
-       uma vez via zoom.
-       O padrão é 1 (a TV): zoom diferente de 1 encarece TODO layout e faz o
-       Chromium do Fire Stick rasterizar as camadas compostas numa escala
-       fracionária — as animações ficam mais caras e o texto mais mole. Quem
-       está num monitor abre uma vez com ?escala=0.7 (ver o script no <head>)
-       e a preferência fica salva naquele navegador. */
-    :root { --escala: 1; }
+       monitor comum tudo fica grande demais. Em vez de mexer em cada rem/vw,
+       encolhemos a página inteira de uma vez via zoom.
+       0.7 é o valor com que o painel está calibrado em todas as telas —
+       mexer aqui muda o enquadramento de TUDO. Dá para testar outro valor sem
+       editar o arquivo, com ?escala=... (ver o script no <head>): zoom = 1
+       sai mais barato para o navegador, mas só depois de reajustar o layout. */
+    :root { --escala: 0.7; }
     body { zoom: var(--escala); }
 
     html, body { height: 100%; }
@@ -476,12 +477,7 @@
       align-content: center;
       justify-content: center;
       gap: 1.75rem;
-      /* A folga não é estética: o holofote aumenta o card em foco por
-         transform (scale), que NÃO reserva espaço no layout. Sem esta margem
-         ele encostaria na borda do container — recortado no Colaboradores
-         (overflow: hidden) e, aqui, empurrando a área rolável para cima e
-         piscando uma barra de rolagem no meio da animação. */
-      padding: 1rem 1.25rem;
+      padding: .5rem;
     }
     .lider-card {
       /* Numa TV cabem os três lado a lado dentro do max-w-[1600px]
@@ -605,20 +601,35 @@
        .lider-card--foco / --recuado entre os cards. Sem a classe no container,
        tudo volta ao visual normal (movimento reduzido ou 1 só coordenador).
 
-       O destaque é 100% transform + opacity: o card em foco dá um leve passo
-       à frente e os outros recuam e escurecem. Nada de flex-grow/flex-basis
-       aqui — a versão anterior animava esses dois, o que refazia o layout da
+       O destaque é 100% transform + opacity: os cards fora do foco recuam e
+       escurecem, e o do momento fica de pé sozinho. Nada de flex-grow ou
+       flex-basis aqui — a versão anterior animava esses dois, o que refazia o layout da
        fileira inteira (e reavaliava todos os cqw dos textos dentro dela) a
        cada quadro, por 0.8s, a cada 4.5s, para sempre. Num Fire Stick era de
        longe a animação mais cara do projeto. Com scale, o layout acontece uma
        vez só e cada quadro é trabalho do compositor.
        Também evita de propósito filter/blur, que forçam repintura.
 
-       A escala do foco é contida (1.03) porque transform não reserva espaço:
-       o que cresce demais vaza do container. O contraste vem principalmente
-       dos vizinhos, que caem para .88 e ficam translúcidos — a diferença
-       percebida entre os dois é de ~17%, mais do que suficiente de longe. */
+       Quem RECUA é que muda de tamanho; o card em foco fica na escala 1.
+       Parece invertido, mas é o que mantém tudo dentro da caixa: transform não
+       reserva espaço no layout, então um card em foco maior que 1 vazaria do
+       container — recortado no Colaboradores (overflow: hidden) e, na Frota,
+       inflando a área rolável e piscando uma barra de rolagem no meio da
+       animação. Com os vizinhos em .82 e translúcidos, o card em foco parece
+       ~22% maior sem que nada ultrapasse o próprio lugar. */
+    .lideres-lista--foco {
+      /* Fileira única, como no holofote antigo: lá os cards tinham flex-basis
+         0, então nunca quebravam linha. */
+      flex-wrap: nowrap;
+    }
     .lideres-lista--foco .lider-card {
+      /* Larguras iguais preenchendo a fileira inteira. É o mesmo `1 1 0` que o
+         holofote antigo usava — a diferença é que agora é FIXO, e não um valor
+         animado de .75 a 2.6 refazendo o layout a cada quadro.
+         Sem isto os cards voltam ao `flex: 0 1 clamp(...)` de repouso: param de
+         preencher a linha e ficam centralizados, desalinhados do título da
+         vista, que vai de ponta a ponta. */
+      flex: 1 1 0;
       /* Promove os cards a camadas próprias uma vez só, enquanto o holofote
          está ligado. Sem isto o navegador criaria e destruiria a camada a cada
          troca — uma repintura de todos os cards a cada 4.5s, justamente o
@@ -626,11 +637,11 @@
       will-change: transform, opacity;
     }
     .lideres-lista--foco .lider-card.lider-card--recuado {
-      transform: scale(.88);
+      transform: scale(.82);
       opacity: .3;
     }
     .lideres-lista--foco .lider-card.lider-card--foco {
-      transform: scale(1.03);
+      transform: none;
       opacity: 1;
       border-color: color-mix(in srgb, var(--success) 55%, var(--border));
       box-shadow:
