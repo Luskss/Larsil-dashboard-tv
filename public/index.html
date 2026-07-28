@@ -607,13 +607,31 @@
 
        Hoje as duas telas que usam holofote estão nesse modo, então este bloco
        é o caminho de fallback: vale para quem chamar iniciarHolofote sem
-       `carrossel: true`. */
-    .lideres-lista--foco {
+       `carrossel: true`.
+
+       O `:not(.lideres-lista--carrossel)` em todos os seletores daqui NÃO é
+       enfeite — é a correção de um vazamento que travava a tela no Fire Stick.
+       holofote.js liga as DUAS classes no container (`--foco` sempre,
+       `--carrossel` por cima), e estas regras têm a mesma especificidade que as
+       do carrossel (3 classes cada). O empate se resolve por ordem no arquivo,
+       então o bloco de baixo só ganhava no que ele mesmo redeclara — opacity,
+       transform, z-index. Tudo o que só existe AQUI continuava valendo lá:
+       `will-change`, `border-color` e o `box-shadow` de 80px de desfoque.
+
+       O estrago vinha da combinação com a transição de `.lider-card`, que
+       inclui `border-color .5s`: cor de borda NÃO é compositável, então cada
+       quadro dos 500ms de troca repintava o card — e repintar o card inclui
+       borrar de novo aquela sombra de 80px. Neste bloco o card é um terço da
+       fileira e isso passa despercebido; no carrossel o card é a TELA INTEIRA,
+       e são dois deles trocando (o que entra e o que sai). Meio segundo de
+       repintura de tela cheia com blur grande, a cada 4.5s, para sempre — era
+       a conta mais cara da página. */
+    .lideres-lista--foco:not(.lideres-lista--carrossel) {
       /* Fileira única, como no holofote antigo: lá os cards tinham flex-basis
          0, então nunca quebravam linha. */
       flex-wrap: nowrap;
     }
-    .lideres-lista--foco .lider-card {
+    .lideres-lista--foco:not(.lideres-lista--carrossel) .lider-card {
       /* Larguras iguais preenchendo a fileira inteira. É o mesmo `1 1 0` que o
          holofote antigo usava — a diferença é que agora é FIXO, e não um valor
          animado de .75 a 2.6 refazendo o layout a cada quadro.
@@ -624,14 +642,17 @@
       /* Promove os cards a camadas próprias uma vez só, enquanto o holofote
          está ligado. Sem isto o navegador criaria e destruiria a camada a cada
          troca — uma repintura de todos os cards a cada 4.5s, justamente o
-         engasgo que a mudança acima elimina. */
+         engasgo que a mudança acima elimina.
+         Aqui os cards dividem a fileira, então cada camada é uma fração da
+         tela e o total cabe de sobra. É por isso que a mesma linha é veneno no
+         carrossel, onde cada card É a tela. */
       will-change: transform, opacity;
     }
-    .lideres-lista--foco .lider-card.holofote--recuado {
+    .lideres-lista--foco:not(.lideres-lista--carrossel) .lider-card.holofote--recuado {
       transform: scale(.82);
       opacity: .3;
     }
-    .lideres-lista--foco .lider-card.holofote--foco {
+    .lideres-lista--foco:not(.lideres-lista--carrossel) .lider-card.holofote--foco {
       transform: none;
       opacity: 1;
       border-color: color-mix(in srgb, var(--success) 55%, var(--border));
@@ -705,17 +726,70 @@
          quadro sequer com os três empilhados aparecendo juntos, nem no
          primeiro desenho, antes de aplicarFoco rodar. */
       opacity: 0;
+
+      /* ===== Por que `visibility` além do `opacity: 0` =====
+         `opacity: 0` sozinho pouparia a pintura — mas só enquanto o card não
+         estiver promovido a camada do compositor. Assim que algo o promove
+         (era o `will-change` vazando do bloco de fallback acima), a opacidade
+         passa a ser resolvida NA COMPOSIÇÃO: o navegador rasteriza o conteúdo
+         do card mesmo invisível, para poder mostrá-lo a qualquer momento. Cada
+         card aqui ocupa a tela toda, então cada um desses é uma textura do
+         tamanho da tela parada na memória de vídeo do Fire Stick.
+
+         São 3 coordenadores hoje, então isto não é o vilão da travada — o
+         vilão está no comentário do bloco de fallback, acima. Mas é a diferença
+         entre manter 3 texturas de tela cheia e manter 1, de graça, e protege a
+         tela do dia em que a lista de coordenadores crescer: o custo sobe com o
+         número de cards, e o resto deste bloco não sobe.
+
+         `visibility: hidden` corta pela raiz: subárvore escondida não é
+         pintada nem rasterizada, e não vira camada, independentemente de
+         quantas camadas o resto do CSS peça. Ficam vivos só os cards da troca —
+         o que sai e o que entra. */
+      visibility: hidden;
+
+      /* Transição própria, sem o `border-color` do bloco de fallback: aquela
+         propriedade não é compositável, então animá-la obrigava uma repintura
+         do card de tela cheia (com o box-shadow de 80px de desfoque junto) a
+         cada quadro, por meio segundo, a cada 4.5s.
+
+         `visibility` entra com atraso igual ao fade: quem sai continua visível
+         durante a transição inteira e só some no fim. Na volta (regra do
+         --foco, abaixo) o atraso é 0, para o card da vez aparecer na hora.
+         Transform e opacity com a MESMA duração: com .7s contra .5s, a camada
+         do card que saiu ficava viva 200ms depois de já estar invisível. */
+      transition:
+        opacity .5s ease,
+        transform .5s cubic-bezier(.22, 1, .36, 1),
+        visibility 0s linear .5s;
     }
-    /* Fora da vez: invisível, no mesmo lugar. O deslocamento e a escala só
-       aparecem durante a troca — dão o "chega entrando" de quem assume. */
+    /* Fora da vez: invisível, no mesmo lugar. O deslocamento só aparece
+       durante a troca — dá o "chega entrando" de quem assume.
+       Só translação, sem `scale`: transladar uma camada é de graça (o
+       compositor reusa a textura), enquanto escalar faz o Chromium
+       re-rasterizar a camada na escala nova — de novo, tela cheia. O empurrão
+       lateral sozinho já dá a leitura de direção. */
     .lideres-lista--carrossel .lider-card.holofote--recuado {
       opacity: 0;
-      transform: translateX(4%) scale(.98);
+      transform: translateX(4%);
     }
     .lideres-lista--carrossel .lider-card.holofote--foco {
       opacity: 1;
       transform: none;
+      visibility: visible;
       z-index: 2;
+      /* will-change SÓ no card da vez — nunca em todos (ver o bloco acima).
+         O que sai não precisa dele: o Chromium mantém composto, sozinho,
+         qualquer elemento com transição de opacity/transform em andamento, e
+         este card já está em camada desde que entrou em foco. Ou seja, no
+         repouso vive UMA camada de tela cheia, e duas só durante o meio
+         segundo da troca. */
+      will-change: opacity;
+      /* Sem atraso na visibilidade: quem assume aparece no primeiro quadro. */
+      transition:
+        opacity .5s ease,
+        transform .5s cubic-bezier(.22, 1, .36, 1),
+        visibility 0s linear 0s;
     }
 
     /* Com a tela toda para um coordenador, os tipos cabem TODOS numa fileira
@@ -739,9 +813,17 @@
     .lideres-lista--carrossel .lider-tipo__valor   { font-size: clamp(2.2rem, 7.5cqw, 7rem); }
     .lideres-lista--carrossel .lider-tipo__nome    { font-size: clamp(.85rem, 1.8cqw, 1.6rem); }
 
+    /* Na prática o holofote.js já tira as classes do container quando o
+       movimento é reduzido, então nada aqui chega a valer — é rede de
+       segurança. Os seletores repetem os do carrossel na íntegra porque
+       `@media` não soma especificidade: `.lider-card` sozinho perderia para
+       `.lideres-lista--carrossel .lider-card` e a transição continuaria de pé. */
     @media (prefers-reduced-motion: reduce) {
-      .lider-card { transition: none; }
-      .lideres-lista--foco .lider-card { will-change: auto; }
+      .lider-card,
+      .lideres-lista--carrossel .lider-card,
+      .lideres-lista--carrossel .lider-card.holofote--foco { transition: none; }
+      .lideres-lista--foco .lider-card,
+      .lideres-lista--carrossel .lider-card.holofote--foco { will-change: auto; }
     }
 
     .lideres-aviso {
