@@ -2,44 +2,21 @@
 // Colaboradores e Ativos de TI).
 //
 // Numa TV ninguém clica: em vez de mostrar tudo do mesmo tamanho, damos
-// destaque a um item de cada vez — ele fica em pé e seus números sobem de novo
-// (o "pop"), enquanto os outros recuam. Ao fim do ciclo volta ao primeiro.
-// O CSS (.holofote--foco / --recuado nos itens, mais uma classe no container,
-// em index.html) cuida do tamanho e da opacidade; aqui só alternamos as
-// classes e re-disparamos a contagem do item em foco.
+// destaque a um item de cada vez — ele fica em pé, enquanto os outros recuam.
+// Ao fim do ciclo volta ao primeiro. O CSS (.holofote--foco / --recuado nos
+// itens, mais uma classe no container, em index.html) cuida do tamanho e da
+// opacidade; aqui só alternamos as classes.
 //
 // O ciclo SÓ roda com a vista no ar: enquanto ela está oculta (display:none)
-// ninguém veria a troca, e o requestAnimationFrame da contagem competiria à
-// toa com a aba que o usuário está olhando (ver observarVista).
-//
-// Para o "pop" funcionar, cada número precisa guardar seu alvo em data-valor
-// (a página faz isso ao renderizar) — assim re-animamos sem refazer a busca.
+// ninguém veria a troca (ver observarVista).
 
-import { animarNumero } from "./animacoes.js";
 import { observarVista } from "./visibilidade.js";
 
 const HOLOFOTE_INTERVALO_MS = 4500; // tempo de cada coordenador em destaque
 
-// A contagem começa JUNTO com a troca, não depois dela. Houve uma versão que
-// esperava 750ms (o card terminava de entrar e só então os números subiam):
-// enquanto o card está em transição ele é uma camada do compositor, e
-// reescrever texto lá dentro obriga a repintar e reenviar essa textura à GPU.
-// Adiar tirava esse custo de cima do movimento.
-//
-// Só que o efeito bonito é o outro: o coordenador aparecer já com os números
-// correndo. O custo é limitado — a contagem roda a ~30fps (animacoes.js) e a
-// entrada dura 0.5s, então são ~15 repinturas do card, uma vez a cada 4.5s.
-// Se algum dia isso engasgar na TV, é aqui que se mexe.
-
 // Estado por lista (a Frota e os Colaboradores são listas diferentes): cards
 // atuais, timer do ciclo, índice em foco e se a vista está visível.
 const estados = new Map();
-
-function reanimarCard(card) {
-  card.querySelectorAll("[data-valor]").forEach((el) =>
-    animarNumero(el, Number(el.dataset.valor) || 0)
-  );
-}
 
 function aplicarFoco(estado) {
   estado.cards.forEach((card, j) => {
@@ -53,12 +30,6 @@ function aplicarFoco(estado) {
   // que decide quem aparece (ver .lideres-lista--carrossel no index.html).
   // Daqui não sai posição nenhuma para o CSS calcular — quando saía, uma conta
   // recusada pelo navegador fazia o destaque andar sem a tela mudar.
-
-  // No mesmo instante em que o card assume, seus números recomeçam do zero.
-  // Não precisa de agendamento nem de cancelamento: animarNumero é keyed pelo
-  // elemento, então uma contagem nova no mesmo número substitui a anterior.
-  const emFoco = estado.cards[estado.i];
-  if (emFoco) reanimarCard(emFoco);
 }
 
 function iniciarCiclo(estado) {

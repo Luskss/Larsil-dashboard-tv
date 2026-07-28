@@ -77,11 +77,8 @@ function desenharCards(tipos) {
 
   aplicarNumeros(alvo, ".kpi__valor", tipos.map((t) => t.qtd), remontar);
 
-  // Rodízio de destaque entre os quatro painéis. Depois do aplicarNumeros de
-  // propósito: é ele que grava o data-valor de cada número, e é de lá que o
-  // holofote relê para fazer a contagem subir de novo no painel da vez.
-  // Só com cards novos, senão o destaque saltaria de volta ao primeiro a cada
-  // atualização de 5 min.
+  // Rodízio de destaque entre os quatro painéis. Só com cards novos, senão o
+  // destaque saltaria de volta ao primeiro a cada atualização de 5 min.
   if (remontar) {
     iniciarHolofote(alvo, { item: ".kpi", classeLista: "ativos-grid--foco" });
   }
