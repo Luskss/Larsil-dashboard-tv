@@ -18,6 +18,23 @@
     :root { --escala: 1; }
     body { zoom: var(--escala); }
 
+    /* ===== Margem de segurança da TV (overscan) =====
+       Televisor não mostra a imagem inteira: ele corta uma faixa das quatro
+       bordas (overscan, herança da TV analógica) e o que estiver encostado no
+       limite some. Na nossa, o primeiro a sumir foi a barra de rotação, que
+       mora em bottom: 0.
+
+       Isto NÃO se resolve com --escala. Medido: com --escala em 1, 0.9 e 0.8, a
+       barra continua a 0px da borda nas três — ela é position:fixed, então o
+       zoom encolhe o conteúdo mas não a tira do canto. As bolinhas até se
+       aproximam da borda (19px -> 15px), porque o bottom delas encolhe junto.
+       Quem resolve é afastar da borda o que é fixo, que é o que esta medida faz
+       (ver o uso dela no CSS de paginacao.js).
+
+       Em vmin para acompanhar a tela. Cortou de menos, aumente; sua TV não
+       corta nada (monitor, projetor), pode zerar. */
+    :root { --margem-tv: 2vmin; }
+
     html, body { height: 100%; }
     body { overflow: hidden; }
     .vista { display: none; }
@@ -1756,8 +1773,8 @@
     /* Toast de notificação de novos chamados (canto inferior direito). */
     .toast-novos {
       position: fixed;
-      right: 1.5rem;
-      bottom: 1.5rem;
+      right: calc(1.5rem + var(--margem-tv, 0px));
+      bottom: calc(1.5rem + var(--margem-tv, 0px));
       z-index: 50;
       display: flex;
       align-items: center;

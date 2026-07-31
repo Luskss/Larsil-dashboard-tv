@@ -89,10 +89,14 @@ export function ordenarPaginas(ordem) {
 }
 
 const CSS = `
+  /* Os offsets somam --margem-tv (definida no index.html): é a faixa que o
+     televisor corta das bordas. Sem ela, o que mora no limite da tela — a
+     barra de rotação em bottom: 0, à frente de todos — simplesmente não
+     aparece na TV. */
   .paginacao {
     position: fixed;
     left: 50%;
-    bottom: 1rem;
+    bottom: calc(1rem + var(--margem-tv, 0px));
     display: flex;
     align-items: center;
     gap: .65rem;
@@ -172,8 +176,14 @@ const CSS = `
     100% { opacity: 0;  transform: scale(1.9); }
   }
 
-  /* O padding no rodapé garante que a barra fixa não cubra o conteúdo. */
-  body { padding-bottom: 4.5rem; }
+  /* O padding no rodapé garante que a barra fixa não cubra o conteúdo; os
+     outros três lados são a margem de segurança da TV, para o conteúdo não
+     encostar em borda nenhuma. Fica aqui, e não no index.html, porque este
+     CSS é injetado depois e venceria um padding-bottom declarado lá. */
+  body {
+    padding: var(--margem-tv, 0px);
+    padding-bottom: calc(4.5rem + var(--margem-tv, 0px));
+  }
 
   /* ===== Transição entre páginas =====
      Só a vista que ENTRA anima (pagina-entrar, aplicada em .vista--ativa no
@@ -211,10 +221,11 @@ const CSS = `
      animação mais cara do projeto, e a única que nunca parava. */
   .rotacao-progresso {
     position: fixed;
-    left: 0;
-    bottom: 0;
+    left: var(--margem-tv, 0px);
+    bottom: var(--margem-tv, 0px);
     height: 4px;
-    width: 100%;
+    /* Encolhe junto com as margens laterais, senão as pontas ficariam fora. */
+    width: calc(100% - 2 * var(--margem-tv, 0px));
     transform: scaleX(0);
     transform-origin: left center;
     will-change: transform;
@@ -236,8 +247,8 @@ const CSS = `
      fundo e contraste no hover/foco, quando alguém já foi até lá de propósito. */
   .sair-btn {
     position: fixed;
-    left: 1rem;
-    bottom: 1rem;
+    left: calc(1rem + var(--margem-tv, 0px));
+    bottom: calc(1rem + var(--margem-tv, 0px));
     padding: .5rem .9rem;
     border-radius: 999px;
     background: transparent;
