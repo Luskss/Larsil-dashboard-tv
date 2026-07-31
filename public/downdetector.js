@@ -67,6 +67,10 @@ export async function consultarFrotaLideres() {
   return pedir("/api/frota-lideres");
 }
 
+export async function consultarVeiculosReservas() {
+  return pedir("/api/veiculos-reservas");
+}
+
 export async function consultarClima(cidade) {
   return pedir(`/api/clima?cidade=${encodeURIComponent(cidade)}`);
 }

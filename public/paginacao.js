@@ -41,6 +41,7 @@ export const PAGINAS = [
   { rotulo: "Ativos de TI", arquivo: "ativos-ti.html",           vista: "vista-ativos",    hash: "#ativos" },
   { rotulo: "Colaboradores",arquivo: "colaboradores.html",       vista: "vista-colaboradores", hash: "#colaboradores" },
   { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },
+  { rotulo: "Reservas de Veículos", arquivo: "reservas-veiculos.html", vista: "vista-reservas", hash: "#reservas" },
   { rotulo: "Serviços",     arquivo: "railway-status.html",      vista: "vista-railway",   hash: "#servicos" },
 ];
 

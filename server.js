@@ -21,6 +21,7 @@
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/colaboradores      -> quadro por coordenador, com as classes (SQL Server, dbo.COLABORADORES)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
+//   GET  /api/veiculos-reservas  -> reservas dos carros (dbo.VEICULOS_RESERVAS_TESTE x dbo.VEICULOS_TESTE)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 
 import express from "express";
@@ -1316,6 +1317,148 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar os chamados do helpdesk:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco do helpdesk" });
+  }
+});
+
+// ===== Reservas de veículos (SQL Server) =====
+// Quem está com cada carro agora. Os veículos vêm de dbo.VEICULOS_TESTE (só os
+// ativos — carro desativado saiu da frota e não deve ocupar espaço na TV) e as
+// reservas de dbo.VEICULOS_RESERVAS_TESTE, com o nome de quem reservou vindo de
+// dbo.USUARIOS_RESERVA_TESTE pelo id_usuario.
+//
+// Na tabela, `data` é DATE e `inicio`/`fim` são TIME — três campos separados,
+// sem fuso nenhum: são a data e as horas do relógio de quem reserva. O driver
+// devolveria os três como Date em UTC (o TIME vira 1970-01-01T07:00:00Z), e aí
+// qualquer comparação com "agora" erraria pelo deslocamento do fuso. Por isso o
+// SQL já converte para texto ('2026-08-01', '07:00') e a comparação é feita
+// entre strings — que, nesses formatos, ordenam igual ao relógio.
+const FUSO_RESERVAS = "America/Sao_Paulo";
+
+// Uma reserva de daqui a três semanas não interessa ao painel; a janela evita
+// arrastar a tabela inteira só para mostrar as próximas do mural.
+const DIAS_AGENDA_RESERVAS = 14;
+
+// Quantas reservas futuras o mural lateral mostra. O mural rola, mas numa TV
+// ninguém rola: o que passar disso não seria visto por ninguém.
+const PROXIMAS_RESERVAS = 5;
+
+// Data e hora do relógio de Telêmaco Borba, no mesmo formato que sai do SQL.
+// A TV pode estar em qualquer fuso, e o Railway roda em UTC — usar o relógio do
+// processo faria o painel trocar de turno na hora errada.
+function agoraNoFuso() {
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: FUSO_RESERVAS,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date());
+  const p = Object.fromEntries(partes.map((x) => [x.type, x.value]));
+  return { data: `${p.year}-${p.month}-${p.day}`, hora: `${p.hour}:${p.minute}` };
+}
+
+// Soma dias a uma data "YYYY-MM-DD" (UTC de propósito: é só aritmética de
+// calendário sobre a data já resolvida no fuso certo, sem horário no meio).
+function somarDias(data, dias) {
+  const d = new Date(`${data}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+app.get("/api/veiculos-reservas", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    const { data: hoje, hora: agora } = agoraNoFuso();
+
+    // O cache guarda só o que veio do banco — a janela consultada vira o dia
+    // seguinte sozinha, no máximo um minuto depois da virada. A classificação
+    // (em uso / livre) depende do relógio e fica fora dele: com ela dentro, um
+    // carro que soltasse às 10h continuaria "em uso" até o cache vencer.
+    const { veiculos, reservas } = await comCacheSql("veiculos-reservas", async () => {
+      const pool = await conectarSql();
+
+      // A placa não sobe: o card identifica o carro pelo prefixo e pela arte do
+      // modelo (ver ARTES em reservas-veiculos.js), e o modelo vai junto porque
+      // é ele que escolhe a figura.
+      const consultaVeiculos = await pool.request().query(
+        `SELECT id, LTRIM(RTRIM(prefixo)) AS prefixo, LTRIM(RTRIM(modelo)) AS modelo
+           FROM dbo.VEICULOS_TESTE
+          WHERE ativo = 1
+          ORDER BY prefixo`
+      );
+
+      const consultaReservas = await pool.request()
+        .input("de", sql.Date, hoje)
+        .input("ate", sql.Date, somarDias(hoje, DIAS_AGENDA_RESERVAS))
+        .query(
+          `SELECT r.id, r.id_veiculo AS idVeiculo,
+                  CONVERT(varchar(10), r.data, 23) AS data,
+                  CONVERT(varchar(5), r.inicio, 108) AS inicio,
+                  CONVERT(varchar(5), r.fim, 108) AS fim,
+                  LTRIM(RTRIM(ISNULL(r.motivo, ''))) AS motivo,
+                  LTRIM(RTRIM(ISNULL(u.nome, ''))) AS usuario
+             FROM dbo.VEICULOS_RESERVAS_TESTE r
+             LEFT JOIN dbo.USUARIOS_RESERVA_TESTE u ON u.id = r.id_usuario
+            WHERE LOWER(LTRIM(RTRIM(r.status))) = 'active'
+              AND r.data >= @de AND r.data <= @ate
+            ORDER BY r.data, r.inicio`
+        );
+
+      return { veiculos: consultaVeiculos.recordset, reservas: consultaReservas.recordset };
+    }, 60 * 1000);
+
+    // Reservas por veículo, já na ordem cronológica que veio do SQL.
+    const porVeiculo = new Map();
+    for (const r of reservas) {
+      if (!porVeiculo.has(r.idVeiculo)) porVeiculo.set(r.idVeiculo, []);
+      porVeiculo.get(r.idVeiculo).push(r);
+    }
+
+    // Terminou = já passou do fim (só faz sentido para as de hoje; as de amanhã
+    // em diante são todas futuras).
+    const emAndamento = (r) => r.data === hoje && r.inicio <= agora && agora < r.fim;
+    const futura = (r) => r.data > hoje || (r.data === hoje && r.inicio > agora);
+
+    const lista = veiculos.map((v) => {
+      const doVeiculo = porVeiculo.get(v.id) || [];
+      const atual = doVeiculo.find(emAndamento) || null;
+      const proxima = doVeiculo.find(futura) || null;
+      return {
+        id: v.id,
+        prefixo: v.prefixo,
+        modelo: v.modelo,
+        // "reservado" = livre agora, mas com saída marcada ainda para hoje.
+        estado: atual ? "em-uso" : (proxima?.data === hoje ? "reservado" : "livre"),
+        atual,
+        proxima,
+        // Quantas reservas o carro tem hoje (inclui a que está rodando).
+        hoje: doVeiculo.filter((r) => r.data === hoje).length,
+      };
+    });
+
+    // Mural lateral: as próximas saídas da frota inteira, com o carro junto.
+    const nomeVeiculo = new Map(veiculos.map((v) => [v.id, v]));
+    const proximas = reservas
+      .filter((r) => futura(r) && nomeVeiculo.has(r.idVeiculo))
+      .slice(0, PROXIMAS_RESERVAS)
+      .map((r) => ({ ...r, prefixo: nomeVeiculo.get(r.idVeiculo).prefixo }));
+
+    res.json({
+      hoje,
+      agora,
+      resumo: {
+        total: lista.length,
+        emUso: lista.filter((v) => v.estado === "em-uso").length,
+        reservados: lista.filter((v) => v.estado === "reservado").length,
+        livres: lista.filter((v) => v.estado === "livre").length,
+      },
+      veiculos: lista,
+      proximas,
+    });
+  } catch (erro) {
+    console.error("Erro ao consultar as reservas de veículos:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar o banco de reservas de veículos" });
   }
 });
 

@@ -1524,6 +1524,235 @@
       background: color-mix(in srgb, var(--critical) 18%, transparent);
     }
 
+    /* ===== Vista Reservas de Veículos =====
+       Cabeçalho com três KPIs, e embaixo os cards dos carros à esquerda com o
+       mural das próximas saídas à direita. Como as outras vistas, o que sobra
+       de altura é dividido entre os cards — a página em si nunca rola. */
+    .reservas-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+    }
+    .reservas-kpis .kpi__valor { font-size: clamp(2rem, 4vw, 3rem); }
+    .kpi--em-uso    { --cor-kpi: var(--alert); }
+    .kpi--reservado { --cor-kpi: var(--text); }
+    .kpi--livre     { --cor-kpi: var(--success); }
+
+    .reservas-grid {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      /* O mural é apoio: os cards dos carros é que são a tela. A largura é o
+         mínimo em que a linha de cima do item (dia + faixa de horário) ainda
+         cabe sem quebrar — abaixo disso ela parte em duas e o mural fica mais
+         alto, não mais estreito. */
+      grid-template-columns: minmax(0, 1fr) minmax(0, 17rem);
+      gap: 1.25rem;
+      align-items: stretch;
+    }
+    @media (max-width: 1100px) { .reservas-grid { grid-template-columns: 1fr; } }
+
+    /* --colunas vem do reservas-veiculos.js: a grade se ajusta ao tamanho da
+       frota para não sobrar um card sozinho na última fileira. */
+    .reservas-veiculos {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(var(--colunas, 2), minmax(0, 1fr));
+      grid-auto-rows: minmax(0, 1fr);
+      gap: 1.25rem;
+    }
+    @media (max-width: 800px) { .reservas-veiculos { grid-template-columns: 1fr; } }
+
+    /* Card do carro: mesma casca dos .painel, com uma faixa na cor do estado
+       na borda de cima — dá para ler a situação da frota de longe, só pelas
+       faixas, sem chegar perto o suficiente para ler o texto. */
+    .veiculo-card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-top: 4px solid var(--cor-estado, var(--border));
+      border-radius: 1.5rem;
+      padding: 1rem 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+      min-height: 0;
+      overflow: hidden;
+    }
+    /* Só o carro em uso ganha fundo próprio: é o que a tela existe para mostrar. */
+    .veiculo-card--em-uso { background: var(--surface-2); }
+
+    /* Só o selo de estado mora aqui — o card não tem mais prefixo, placa nem
+       nome de modelo: quem identifica o carro é a arte. */
+    .veiculo-card__topo {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    /* Arte do carro no lugar da placa e do nome do modelo.
+
+       A fatia de 38% da altura do card é o que PADRONIZA o tamanho das artes.
+       Os PNGs são exportados todos com a mesma altura (400px) e larguras
+       diferentes, então, numa caixa igual em todos os cards, o contain escala
+       os quatro pelo mesmo fator: cada logo é desenhado com a mesma altura na
+       tela e só a largura acompanha a proporção do desenho. Antes a figura
+       tomava a folga que sobrasse (flex: 1 1 0), e a folga dependia do tamanho
+       do texto da reserva — o mesmo carro aparecia maior no card sem reserva e
+       menor no card com três linhas embaixo.
+
+       Daí também a largura folgada (92%): ela é limite de segurança, não a
+       medida que manda. Enquanto a caixa for larga o bastante para a arte mais
+       comprida, é sempre a ALTURA que decide a escala, que é o que mantém os
+       quatro do mesmo tamanho. Se a frota crescer a ponto da grade virar cards
+       estreitos, a largura passa a mandar — aí os logos ficam todos da mesma
+       largura, que continua sendo uniforme entre eles.
+
+       E 38% é de propósito menos do que caberia: sobra folga suficiente para o
+       card mais cheio (condutor + motivo em duas linhas + horário) sem que o
+       flex-shrink precise entrar. Uma fatia maior deixaria os logos mais
+       imponentes, mas o primeiro motivo comprido encolheria a arte DAQUELE
+       card — e a padronização se perderia justamente onde ela é visível, com
+       os cards lado a lado.
+
+       As margens automáticas centram a arte na sobra, em vez de deixá-la colada
+       no selo de estado. */
+    .veiculo-card__foto {
+      flex: 0 1 38%;
+      min-height: 0;
+      width: 92%;
+      object-fit: contain;
+      margin: auto;
+      /* A arte é branca pura; a 100% ela roubaria a cena de quem está com o
+         carro, que é o que a tela existe para mostrar. */
+      opacity: .9;
+    }
+
+    .veiculo-selo {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      flex: 0 0 auto;
+      padding: .3rem .6rem;
+      border-radius: 999px;
+      font-size: .7rem;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--cor-estado, var(--text-dim));
+      background: color-mix(in srgb, var(--cor-estado, var(--text-dim)) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--cor-estado, var(--text-dim)) 35%, transparent);
+    }
+    .veiculo-selo__bolinha {
+      width: 7px; height: 7px;
+      border-radius: 999px;
+      background: var(--cor-estado, var(--text-dim));
+      flex: 0 0 auto;
+    }
+
+    .veiculo-card__corpo {
+      margin-top: auto;
+      border-top: 1px solid var(--border);
+      padding-top: .6rem;
+      min-height: 0;
+    }
+    .reserva-condutor {
+      font-weight: 700;
+      font-size: clamp(.95rem, 1.5vw, 1.2rem);
+      line-height: 1.2;
+    }
+    .reserva-condutor--espera { color: var(--text-dim); }
+    .reserva-motivo {
+      margin-top: .2rem;
+      font-size: .8rem;
+      color: var(--text-dim);
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .reserva-espera { margin-top: .45rem; font-size: .8rem; color: var(--text-dim); }
+    .reserva-espera strong { color: var(--text); font-variant-numeric: tabular-nums; }
+    .reserva-livre { font-size: .85rem; color: var(--text-dim); }
+
+    /* Janela da reserva em andamento: começo, barra de progresso e fim. */
+    .reserva-janela {
+      margin-top: .5rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .75rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+    .reserva-barra {
+      flex: 1;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+    .reserva-barra > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--cor-estado, var(--alert));
+    }
+
+    /* Mural lateral: as próximas saídas, uma embaixo da outra. */
+    .reservas-agenda {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .reservas-proximas {
+      margin-top: .85rem;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto; /* a barra já vem tematizada do tema.css */
+    }
+    .proxima {
+      padding: .6rem .7rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .proxima + .proxima { margin-top: .6rem; }
+    .proxima__quando {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: .5rem;
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .proxima__hora { font-variant-numeric: tabular-nums; }
+    .proxima__carro { margin-top: .2rem; font-weight: 800; letter-spacing: .02em; }
+    .proxima__quem { font-size: .8rem; }
+    .proxima__motivo {
+      font-size: .75rem;
+      color: var(--text-dim);
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+    }
+    .proxima__vazio { font-size: .85rem; color: var(--text-dim); }
+
+    .reservas-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .reservas-aviso--visivel { display: block; }
+
     /* Toast de notificação de novos chamados (canto inferior direito). */
     .toast-novos {
       position: fixed;
@@ -1859,6 +2088,43 @@
     <div id="colunas" class="colunas mt-3"></div>
   </section>
 
+  <!-- ===== Vista Reservas de Veículos (quem está com cada carro agora) ===== -->
+  <section id="vista-reservas" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Reservas de Veículos</h1>
+      <div id="reservas-agora" class="mapa-total"></div>
+    </div>
+
+    <div id="reservas-aviso" class="reservas-aviso" role="alert"></div>
+
+    <!-- Contadores do momento (preenchidos por reservas-veiculos.js) -->
+    <div class="reservas-kpis">
+      <div class="painel kpi kpi--em-uso">
+        <div class="kpi__valor" data-reserva-kpi>–</div>
+        <div class="kpi__rotulo">Em uso</div>
+      </div>
+      <div class="painel kpi kpi--reservado">
+        <div class="kpi__valor" data-reserva-kpi>–</div>
+        <div class="kpi__rotulo">Reservados hoje</div>
+      </div>
+      <div class="painel kpi kpi--livre">
+        <div class="kpi__valor" data-reserva-kpi>–</div>
+        <div class="kpi__rotulo">Livres</div>
+      </div>
+    </div>
+
+    <div class="reservas-grid mt-3">
+      <!-- Um card por veículo de dbo.VEICULOS_TESTE -->
+      <div id="reservas-veiculos" class="reservas-veiculos"></div>
+
+      <!-- Mural das próximas saídas da frota -->
+      <div class="painel reservas-agenda">
+        <div class="painel__titulo">Próximas saídas</div>
+        <div id="reservas-proximas" class="reservas-proximas"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== Vista Serviços (status dos outros projetos no Railway) ===== -->
   <section id="vista-railway" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
@@ -1893,6 +2159,7 @@
   <script src="./ativos-ti.js" type="module"></script>
   <script src="./colaboradores.js" type="module"></script>
   <script src="./helpdesk-chamados.js" type="module"></script>
+  <script src="./reservas-veiculos.js" type="module"></script>
   <script src="./railway-status.js" type="module"></script>
 </body>
 </html>
