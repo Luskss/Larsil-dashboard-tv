@@ -60,10 +60,14 @@ export async function carregarConfigPaginas() {
       visiveis: Array.isArray(dados.visiveis) ? dados.visiveis : null,
     };
   } catch (erro) {
-    // Uma TV sem rede ainda tem que mostrar as páginas: cai no padrão em vez
-    // de ficar sem barra de navegação.
+    // null = "não deu para saber", que é DIFERENTE de "ninguém configurou".
+    // Antes daqui saía CONFIG_PADRAO, e um blip de rede virava uma
+    // configuração legítima: a sincronia de 30s comparava o padrão com o que
+    // estava no ar, achava que tinha mudado, remontava a barra inteira e a
+    // rotação recomeçava — tudo por causa de um fetch que falhou. Quem chama
+    // decide o que fazer com o null (ver montarPaginacao).
     console.error("Páginas:", erro);
-    return CONFIG_PADRAO;
+    return null;
   }
 }
 
@@ -111,6 +115,16 @@ const CSS = `
     background: color-mix(in srgb, var(--bg) 92%, transparent);
     border: 1px solid var(--border);
     z-index: 50;
+  }
+  /* A entrada deslizando de baixo é só da ABERTURA do painel, por isso mora
+     numa classe à parte em vez de na .paginacao.
+     Quando estava na .paginacao, ela valia para todo <nav> criado — e o nav é
+     recriado a cada mudança de configuração. Na TV, que fica ligada o dia
+     inteiro, isso aparecia como a barra "subindo" sozinha de vez em quando, no
+     meio de uma vista qualquer. Pior: a curva tem overshoot (o 1.4 no
+     cubic-bezier), então ela subia passando do ponto e voltava — parecia
+     defeito, e não animação. */
+  .paginacao--entrada {
     animation: paginacao-entrar .55s cubic-bezier(.22, 1.4, .36, 1) both;
   }
   @keyframes paginacao-entrar {
@@ -356,7 +370,9 @@ export async function montarPaginacao() {
 
     if (nav) nav.remove();
     nav = document.createElement("nav");
-    nav.className = "paginacao";
+    // A animação de entrada só na abertura: numa remontagem a barra já está
+    // na tela, e reanimá-la só faz o rodapé se mexer sem motivo.
+    nav.className = inicial ? "paginacao paginacao--entrada" : "paginacao";
     nav.setAttribute("aria-label", "Páginas do dashboard");
     nav.innerHTML = paginas.map((pagina) =>
       `<button type="button" class="paginacao__bolinha"
@@ -376,11 +392,17 @@ export async function montarPaginacao() {
     ativar(manter);
   }
 
-  aplicar(await carregarConfigPaginas(), true);
+  // Na abertura, sem resposta do servidor, o padrão vale: uma TV sem rede
+  // ainda tem que mostrar as páginas em vez de ficar sem barra nenhuma.
+  aplicar(await carregarConfigPaginas() ?? CONFIG_PADRAO, true);
   montarBotaoSair();
 
   setInterval(async () => {
     const config = await carregarConfigPaginas();
+    // Sincronia que falhou não é configuração: sai sem tocar na barra e tenta
+    // de novo em 30s. Antes, o padrão devolvido no erro passava por mudança e
+    // remontava tudo — a barra pulava e a rotação recomeçava a cada blip.
+    if (!config) return;
     // Só remonta se mudou de verdade: rebuild a cada 30s reiniciaria a barra
     // de rotação e a TV nunca trocaria de página sozinha.
     if (JSON.stringify(config) !== aplicada) aplicar(config);

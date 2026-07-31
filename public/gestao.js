@@ -153,6 +153,11 @@ function renderizarLista() {
 }
 
 carregarConfigPaginas().then((config) => {
+  // Aqui o null (falha ao carregar) precisa virar erro na tela: a lista é o
+  // que será SALVO de volta, e mostrar os padrões como se fossem a
+  // configuração atual faria quem clicasse em Salvar sobrescrever o que está
+  // no servidor sem saber.
+  if (!config) throw new Error("Não foi possível carregar as páginas");
   ordem = ordenarPaginas(config.ordem);
   // visiveis null = nunca configurado: começa com tudo marcado.
   visiveis = new Set(config.visiveis || PAGINAS.map((p) => p.arquivo));
