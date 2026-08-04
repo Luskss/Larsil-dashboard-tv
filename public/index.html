@@ -1157,6 +1157,512 @@
     }
     .ativos-aviso--visivel { display: block; }
 
+    /* ===== Vista Apontamento =====
+       Radar de equipe parada: matriz equipe x últimos 15 dias, na ordem da
+       urgência. O desenho vem da tela "Status Apontamento" do TimberTrack
+       (docs/boletins.acompanhar.tsx): quadradinho colorido por dia, coluna do
+       dia de referência destacada em dourado, faixa escura separando os
+       grupos e o placar em números grandes no topo.
+
+       O que mudou na adaptação, e por quê:
+       - A tela original é clara (creme #fcfbf7 sobre verde #064e3b). Aqui o
+         painel é escuro e fixo, então as cores viraram variáveis e subiram de
+         luminosidade: o #2e7d32 e o #c62828 do original ficam quase pretos
+         sobre este fundo e, a três metros de uma TV, verde e vermelho escuros
+         viram a mesma mancha.
+       - As fontes Sora/Manrope do original vêm do Google Fonts, que a CSP do
+         servidor (font-src 'self') bloqueia. O peso e o tracking imitam o
+         efeito com a fonte do sistema.                                      */
+    /* As duas vistas do apontamento dividem a paleta. Estava só em
+       #vista-apontamento e a de Pendências nascia sem nenhuma delas: os selos
+       "CRÍTICO"/"ATENÇÃO" saíam sem fundo e a borda colorida do card sumia,
+       porque var(--ap-critico) não resolvia fora daquele escopo. */
+    #vista-apontamento,
+    #vista-pendencias {
+      /* O dourado e o verde-escuro são os do original, que já funcionam sobre
+         fundo escuro. Os semáforos são as cores do original clareadas. */
+      --ap-ouro:    #c9a84c;
+      --ap-ok:      #3fa34d;
+      --ap-atencao: #e0a63c;
+      --ap-critico: #d9534f;
+      --ap-evento:  #2f7fbf;   /* folga registrada: azul, não é cobrança */
+      --ap-parada:  #ef6c00;   /* SEM ATIVIDADE, o laranja do original      */
+      --ap-vazio:   rgba(238, 243, 234, .07);
+      /* Opaca de propósito — é o fundo do cabeçalho fixo, que precisa tapar as
+         linhas passando por baixo. Tom da família do gradiente do tema. */
+      --ap-cabecalho: #1b2a21;
+    }
+
+    /* Coordenador da vez: a tela é de um só por vez, então o nome fica ao lado
+       do título, em dourado — é a informação que muda a cada 15s. */
+    .ap-coordenador {
+      padding: .2rem .7rem;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--ap-ouro) 16%, transparent);
+      border: 1px solid color-mix(in srgb, var(--ap-ouro) 40%, transparent);
+      color: var(--ap-ouro);
+      font-size: .8rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    /* Bolinhas do rodízio, na mesma ideia das bolinhas de página. */
+    .ap-indicador { display: flex; align-items: center; gap: .3rem; }
+    .ap-ponto {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--border);
+      transition: background .3s ease, width .3s ease;
+    }
+    .ap-ponto--ativo { width: 16px; background: var(--ap-ouro); }
+
+    /* Placar do topo, no lugar do "Mensal / dia" do original. */
+    .ap-placar {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+    .ap-placar__item { text-align: right; }
+    .ap-placar__rotulo {
+      font-size: .6rem;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .ap-placar__valor {
+      font-size: 1.5rem;
+      font-weight: 800;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+      color: var(--cor-placar, var(--text));
+    }
+    .ap-placar__divisor { width: 1px; height: 1.75rem; background: var(--border); }
+
+    /* KPIs do semáforo: mesmos blocos das outras vistas, cores do original. */
+    .ap-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+    }
+    /* Mais baixos que os KPIs das outras vistas de propósito: a altura que
+       sobra vai para as linhas da matriz, que é o conteúdo desta tela. Com os
+       KPIs no tamanho padrão cabiam 18 equipes; assim cabem as 24 do maior
+       coordenador, e nenhum grupo aparece cortado. */
+    .ap-kpis .kpi { padding: .45rem 1rem; gap: .15rem; }
+    .ap-kpis .kpi__valor { font-size: clamp(1.4rem, 3.6vh, 2.1rem); }
+    .ap-kpis .kpi__rotulo { font-size: .72rem; }
+    .kpi--ap-ok      { --cor-kpi: var(--ap-ok); }
+    .kpi--ap-atencao { --cor-kpi: var(--ap-atencao); }
+    .kpi--ap-critico { --cor-kpi: var(--ap-critico); }
+    .kpi--ap-nunca   { --cor-kpi: var(--text-dim); }
+
+    /* A matriz. Rola só se não couber; o JS já corta a lista no que cabe. */
+    .ap-matriz {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      margin-top: .75rem;
+      border: 2px solid var(--border);
+      border-radius: 1.25rem;
+      background: var(--surface);
+      transition: opacity .25s ease; /* casa com DURACAO_FADE_MS */
+    }
+    /* Meio da troca de coordenador: a tabela some, é remontada e volta. */
+    .ap-matriz--trocando { opacity: 0; }
+    @media (prefers-reduced-motion: reduce) {
+      .ap-matriz { transition: none; }
+    }
+    .ap-tabela {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    /* Cabeçalho grudado no topo: com a lista rolando sozinha, perder a régua
+       de datas deixaria os quadradinhos sem significado.
+       O fundo precisa ser OPACO. Aqui havia var(--surface-2), que é um rgba
+       translúcido como todas as superfícies do tema — funcionava enquanto a
+       lista era estática, mas com a rolagem automática as linhas passavam por
+       baixo e apareciam através do cabeçalho. Um blur de backdrop-filter não
+       resolve (e ainda custa GPU no Fire Stick): a cor tem que tapar. */
+    .ap-tabela thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--ap-cabecalho);
+      padding: .5rem .25rem;
+      font-size: .62rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 2px solid var(--border);
+    }
+    .ap-tabela th.ap-col-equipe { text-align: left; padding-left: 1rem; }
+    .ap-tabela th.ap-col-num    { text-align: center; }
+    .ap-th-dia__numero { font-size: .72rem; color: var(--text); font-weight: 800; }
+    .ap-th-dia__letra  { font-size: .55rem; opacity: .55; }
+    /* Coluna do dia de referência: o realce dourado do original. */
+    .ap-col-foco {
+      background: color-mix(in srgb, var(--ap-ouro) 16%, transparent) !important;
+      box-shadow: inset 1px 0 0 color-mix(in srgb, var(--ap-ouro) 45%, transparent),
+                  inset -1px 0 0 color-mix(in srgb, var(--ap-ouro) 45%, transparent);
+    }
+    /* No cabeçalho o realce mistura com a cor opaca em vez de ficar por cima
+       dela: com o dourado translúcido, esta era a única coluna do cabeçalho
+       que deixava as linhas roladas aparecerem por baixo. */
+    .ap-tabela thead th.ap-col-foco {
+      background: color-mix(in srgb, var(--ap-ouro) 16%, var(--ap-cabecalho)) !important;
+    }
+    /* Dias do mês que ainda não chegaram. A caixa vazia fica desenhada com
+       força total, como no original — é ela que mostra quanto do mês falta.
+       Quem apaga é só o NÚMERO do dia no cabeçalho: aplicar a opacidade na
+       coluna inteira (foi a primeira tentativa) sumia com as caixas, porque no
+       tema escuro elas já vivem de um contraste baixo contra o painel. */
+    th.ap-col-futuro { opacity: .45; }
+
+    .ap-linha { border-bottom: 1px solid var(--border); }
+    .ap-linha td { padding: .1rem 0; }
+    .ap-linha__equipe {
+      padding-left: 1rem !important;
+      padding-right: .5rem !important;
+      /* Sem isto o "via 820AZ" escapa da célula e cobre o quadradinho do
+         primeiro dia — table-layout: fixed não segura o conteúdo sozinho. */
+      overflow: hidden;
+    }
+    .ap-equipe {
+      display: flex;
+      align-items: baseline;
+      gap: .5rem;
+      min-width: 0;
+    }
+    /* Coordenador: coluna própria, discreta — quem manda na leitura é a
+       urgência da linha, não a hierarquia. */
+    .ap-coord {
+      display: block;
+      font-size: .66rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* O código da equipe é a chave que o pessoal do campo usa — vem primeiro,
+       em dourado, com tabular-nums para as colunas ficarem alinhadas. */
+    .ap-equipe__codigo {
+      font-size: .82rem;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: var(--ap-ouro);
+      font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+    }
+    .ap-equipe__lider {
+      font-size: .72rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* "via 700AC": o boletim existe, mas foi lançado sob outro código de
+       equipe. Some quando os dois batem. */
+    .ap-equipe__via {
+      font-size: .6rem;
+      font-weight: 700;
+      color: var(--ap-evento);
+      flex: 0 0 auto;
+    }
+
+    /* O quadradinho do dia — o elemento central do original. */
+    .ap-celula {
+      margin: 0 auto;
+      width: 84%;
+      max-width: 22px;
+      aspect-ratio: 1;
+      border-radius: .25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .58rem;
+      font-weight: 900;
+      line-height: 1;
+      color: #fff;
+      background: var(--ap-cor, var(--ap-vazio));
+    }
+    .ap-celula--b { --ap-cor: var(--ap-ok); }
+    .ap-celula--n { --ap-cor: var(--ap-critico); }
+    .ap-celula--f { --ap-cor: var(--ap-evento); }
+    .ap-celula--sa { --ap-cor: var(--ap-parada); }
+    /* Domingo e dia que ainda não chegou: caixa vazia, sem símbolo. Preenchida
+       (não transparente) e com borda, para ler como "casa vazia" e não como
+       buraco na tabela — é o mesmo papel do quadradinho creme do original. */
+    .ap-celula--x {
+      --ap-cor: var(--ap-vazio);
+      border: 1px solid var(--border);
+    }
+
+    /* As duas colunas numéricas do fim, como no original (S/A e %). */
+    .ap-num {
+      text-align: center;
+      font-size: .78rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: var(--cor-num, var(--text-dim));
+    }
+    .ap-num--ok      { --cor-num: var(--ap-ok); }
+    .ap-num--atencao { --cor-num: var(--ap-atencao); }
+    .ap-num--critico { --cor-num: var(--ap-critico); }
+    .ap-num--nunca   { --cor-num: var(--text-dim); }
+    .ap-ultimo {
+      font-size: .68rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    /* Última produção antiga demais, mesmo com a cobrança zerada por folga
+       registrada: a data acende para o caso não passar batido. */
+    .ap-ultimo--antigo { color: var(--ap-atencao); font-weight: 800; }
+
+    /* Rodapé: legenda dos símbolos + quantas equipes ficaram de fora. */
+    .ap-rodape {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      padding: .5rem .25rem 0;
+      font-size: .68rem;
+      color: var(--text-dim);
+    }
+    .ap-legenda { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; }
+    .ap-legenda__item { display: flex; align-items: center; gap: .35rem; }
+    .ap-legenda__caixa {
+      width: 14px;
+      height: 14px;
+      border-radius: .2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .5rem;
+      font-weight: 900;
+      color: #fff;
+      background: var(--ap-cor, var(--ap-vazio));
+    }
+
+    .ap-vazio {
+      padding: 3rem 1rem;
+      text-align: center;
+      color: var(--text-dim);
+    }
+
+    /* ===== Vista Pendências: um card por equipe fora do prazo =====
+       O semáforo da vista Apontamento respondia "quantas"; aqui a tela
+       responde "quais e por quê". A justificativa é a conta aberta: dos dias
+       corridos desde o último boletim, quantos são cobrados, quantos têm
+       evento registrado e quantos são domingo. Sem isso o número da matriz
+       vira oráculo — e é justamente ele que manda alguém cobrar uma equipe. */
+    .pd-cards {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      margin-top: 1rem;
+      display: grid;
+      /* 19rem cabe quatro colunas na largura da TV; com 24rem cabiam três, e
+         a sétima pendência caía numa terceira fileira cortada pelo rodapé. */
+      grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+      grid-auto-rows: min-content;
+      gap: 1rem;
+      padding: .25rem;
+      /* Com os cards enxutos sobra altura, e a grade encostada no topo deixava
+         meia tela vazia. `safe` é o que impede o estrago quando NÃO sobra: sem
+         ele, uma lista maior que a tela ficaria centralizada com o topo
+         cortado, fora do alcance da rolagem. Navegador que não conheça a
+         palavra ignora a linha e volta ao alinhamento no topo. */
+      align-content: safe center;
+    }
+    .pd-card {
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+      padding: .8rem .9rem;
+      border-radius: 1rem;
+      background: var(--surface);
+      /* A borda esquerda grossa na cor do estado dá a leitura do semáforo de
+         longe, antes de qualquer texto. */
+      border: 2px solid var(--border);
+      border-left: 6px solid var(--pd-cor, var(--border));
+    }
+    .pd-card--atencao { --pd-cor: var(--ap-atencao); }
+    .pd-card--critico { --pd-cor: var(--ap-critico); }
+    .pd-card--nunca   { --pd-cor: var(--text-dim); }
+    /* Com evento registrado, a cor do card passa a ser a do EVENTO e não a do
+       estado: ausência com folga lançada não deve gritar em vermelho no meio
+       das que ninguém justificou. Depois das regras de estado de propósito —
+       mesma especificidade, então quem vem por último ganha. */
+    .pd-card--folga  { --pd-cor: var(--ap-evento); }
+    .pd-card--parada { --pd-cor: var(--ap-parada); }
+    .pd-card--neutro { --pd-cor: var(--text-dim); }
+
+    .pd-card__topo { display: flex; align-items: baseline; gap: .5rem; }
+    .pd-card__codigo {
+      font-size: .82rem;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: var(--ap-ouro);
+    }
+    .pd-card__lider {
+      font-size: .75rem;
+      font-weight: 700;
+      color: var(--text);
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pd-card__selo {
+      padding: .08rem .45rem;
+      border-radius: 999px;
+      font-size: .52rem;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #fff;
+      background: var(--pd-cor);
+      flex: 0 0 auto;
+    }
+    .pd-card__sub {
+      font-size: .58rem;
+      color: var(--text-dim);
+      margin-top: -.25rem;
+    }
+
+    /* O número que decide a cobrança, grande e do lado do que ele significa. */
+    .pd-card__conta { display: flex; align-items: center; gap: .55rem; }
+    .pd-card__numero {
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      color: var(--pd-cor);
+    }
+    .pd-card__unidade {
+      font-size: .58rem;
+      font-weight: 700;
+      line-height: 1.15;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--text-dim);
+    }
+
+    /* Faixa do motivo: o destaque do card. Cor do EVENTO, não do estado — as
+       mesmas da matriz (azul folga, laranja sem atividade), para as duas telas
+       falarem a mesma língua. O selo e a borda continuam mostrando o estado:
+       equipe de folga pode estar crítica do mesmo jeito. */
+    .pd-motivo {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: .1rem .4rem;
+      padding: .3rem .55rem;
+      border-radius: .55rem;
+      background: color-mix(in srgb, var(--pd-motivo) 16%, transparent);
+      border: 1px solid color-mix(in srgb, var(--pd-motivo) 45%, transparent);
+      color: var(--pd-motivo);
+    }
+    .pd-motivo__texto {
+      font-size: .8rem;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: .01em;
+      text-transform: uppercase;
+    }
+    .pd-motivo__extra {
+      font-size: .56rem;
+      font-weight: 600;
+      opacity: .75;
+    }
+    .pd-motivo--folga  { --pd-motivo: var(--ap-evento); }
+    .pd-motivo--parada { --pd-motivo: var(--ap-parada); }
+    .pd-motivo--neutro { --pd-motivo: var(--text-dim); }
+    /* Sem evento nenhum: a faixa herda a cor do card (--pd-cor), então
+       acompanha a gravidade — vermelha no crítico, âmbar no atenção. Estava
+       âmbar fixa e um crítico sem justificativa saía com a faixa mais calma
+       que a borda, justo no card que mais precisa de cobrança. */
+    .pd-motivo--sem    { --pd-motivo: var(--pd-cor); }
+
+    /* Pares rótulo/valor em duas colunas, no lugar das frases que havia aqui:
+       o rótulo alinhado à esquerda deixa o olho pular direto para o valor, que
+       é o que interessa numa tela que passa em segundos. */
+    .pd-card__linhas {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: .25rem .55rem;
+      align-items: baseline;
+      font-size: .64rem;
+      color: var(--text);
+      border-top: 1px solid var(--border);
+      padding-top: .45rem;
+    }
+    .pd-rotulo {
+      font-size: .5rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .pd-valor { min-width: 0; }
+    .pd-card__linhas b { font-weight: 700; }
+    .pd-card__linhas .pd-alerta { color: var(--ap-atencao); font-weight: 700; }
+
+    /* Bolinhas da legenda dos estados. */
+    .pd-ponto {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--pd-cor, var(--border));
+      display: inline-block;
+    }
+    .pd-ponto--atencao { --pd-cor: var(--ap-atencao); }
+    .pd-ponto--critico { --pd-cor: var(--ap-critico); }
+    .pd-ponto--nunca   { --pd-cor: var(--text-dim); }
+    .pd-ponto--folga   { --pd-cor: var(--ap-evento); }
+    .pd-ponto--parada  { --pd-cor: var(--ap-parada); }
+
+    /* Nenhuma pendência: a tela precisa dizer isso com todas as letras, senão
+       parece que ela quebrou. */
+    .pd-tudo-certo {
+      grid-column: 1 / -1;
+      align-self: center;
+      text-align: center;
+      padding: 3rem 1rem;
+    }
+    .pd-tudo-certo__icone { font-size: 3rem; line-height: 1; }
+    .pd-tudo-certo__texto {
+      margin-top: .75rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--ap-ok);
+    }
+    .pd-tudo-certo__nota { margin-top: .25rem; font-size: .8rem; color: var(--text-dim); }
+
+    .apontamento-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .apontamento-aviso--visivel { display: block; }
+
     /* ===== Vista Colaboradores: um card por coordenador =====
        Reaproveita os cards da Frota por Líder (.lider-card e .lider-tipo): o
        nome do coordenador no topo, o efetivo dele logo abaixo e um tile por
@@ -2068,6 +2574,119 @@
          aria-label="Mapa do Brasil com a localização atual da frota por projeto"></div>
   </section>
 
+  <!-- ===== Vista Apontamento (quando cada equipe apontou pela última vez) ===== -->
+  <section id="vista-apontamento" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <div class="flex items-center gap-3">
+          <h1 class="text-3xl font-extrabold tracking-wide uppercase">Apontamento</h1>
+          <!-- Coordenador no ar; a tela alterna entre eles (apontamento.js) -->
+          <span id="ap-coordenador" class="ap-coordenador"></span>
+          <span id="ap-indicador" class="ap-indicador"></span>
+        </div>
+        <div id="ap-subtitulo" class="painel__subtitulo"></div>
+      </div>
+
+      <!-- Placar: aderência da janela e a data de referência da cobrança -->
+      <div class="ap-placar">
+        <div class="ap-placar__item">
+          <div class="ap-placar__rotulo">Em dia</div>
+          <div id="ap-aderencia" class="ap-placar__valor">–</div>
+        </div>
+        <div class="ap-placar__divisor"></div>
+        <div class="ap-placar__item">
+          <div class="ap-placar__rotulo">Referência</div>
+          <div id="ap-data-ref" class="ap-placar__valor">–</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="apontamento-aviso" class="apontamento-aviso" role="alert"></div>
+
+    <!-- O semáforo em números mora na vista Pendências, que também explica
+         cada equipe fora do prazo. Aqui a altura toda vai para a matriz. -->
+
+    <!-- Matriz equipe x dias, montada por apontamento.js -->
+    <div id="ap-matriz" class="ap-matriz"></div>
+
+    <div class="ap-rodape">
+      <div class="ap-legenda">
+        <span class="ap-legenda__item">
+          <span class="ap-legenda__caixa" style="--ap-cor: var(--ap-ok);">✓</span>Apontou
+        </span>
+        <span class="ap-legenda__item">
+          <span class="ap-legenda__caixa" style="--ap-cor: var(--ap-critico);">B</span>Não apontou
+        </span>
+        <span class="ap-legenda__item">
+          <span class="ap-legenda__caixa" style="--ap-cor: var(--ap-evento);">F</span>Folga
+        </span>
+        <span class="ap-legenda__item">
+          <span class="ap-legenda__caixa" style="--ap-cor: var(--ap-parada);">SA</span>Sem atividade
+        </span>
+        <span class="ap-legenda__item">
+          <span class="ap-legenda__caixa ap-celula--x"></span>Domingo
+        </span>
+      </div>
+      <div id="ap-restantes"></div>
+    </div>
+  </section>
+
+  <!-- ===== Vista Pendências de Apontamento (o semáforo e o porquê) ===== -->
+  <section id="vista-pendencias" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h1 class="text-3xl font-extrabold tracking-wide uppercase">Pendências de Apontamento</h1>
+        <div id="pd-subtitulo" class="painel__subtitulo"></div>
+      </div>
+      <div class="ap-placar">
+        <div class="ap-placar__item">
+          <div class="ap-placar__rotulo">Em dia</div>
+          <div id="pd-aderencia" class="ap-placar__valor">–</div>
+        </div>
+        <div class="ap-placar__divisor"></div>
+        <div class="ap-placar__item">
+          <div class="ap-placar__rotulo">Referência</div>
+          <div id="pd-data-ref" class="ap-placar__valor">–</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pendencias-aviso" class="apontamento-aviso" role="alert"></div>
+
+    <!-- Semáforo das 47 equipes (contagens vindas prontas de /api/apontamento) -->
+    <div class="ap-kpis">
+      <div class="painel kpi kpi--ap-ok">
+        <div class="kpi__valor" data-pd-kpi="ok">–</div>
+        <div class="kpi__rotulo">Em dia</div>
+      </div>
+      <div class="painel kpi kpi--ap-atencao">
+        <div class="kpi__valor" data-pd-kpi="atencao">–</div>
+        <div class="kpi__rotulo">Atenção</div>
+      </div>
+      <div class="painel kpi kpi--ap-critico">
+        <div class="kpi__valor" data-pd-kpi="critico">–</div>
+        <div class="kpi__rotulo">Crítico</div>
+      </div>
+      <div class="painel kpi kpi--ap-nunca">
+        <div class="kpi__valor" data-pd-kpi="nunca">–</div>
+        <div class="kpi__rotulo">Sem apontar</div>
+      </div>
+    </div>
+
+    <!-- Um card por equipe fora do prazo, montado por apontamento.js -->
+    <div id="pd-cards" class="pd-cards"></div>
+
+    <div class="ap-rodape">
+      <div class="ap-legenda">
+        <span class="ap-legenda__item"><span class="pd-ponto pd-ponto--atencao"></span>Atenção: 2 a 3 dias úteis sem apontar</span>
+        <span class="ap-legenda__item"><span class="pd-ponto pd-ponto--critico"></span>Crítico: 4 dias úteis ou mais</span>
+        <span class="ap-legenda__item"><span class="pd-ponto pd-ponto--folga"></span>Folga ou férias registrada</span>
+        <span class="ap-legenda__item"><span class="pd-ponto pd-ponto--parada"></span>Sem atividade registrada</span>
+      </div>
+      <div id="pd-nota"></div>
+    </div>
+  </section>
+
   <!-- ===== Vista Ativos de TI (contagem por tipo) ===== -->
   <section id="vista-ativos" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
@@ -2173,6 +2792,7 @@
   <script src="./frotas.js" type="module"></script>
   <script src="./frota-lideres.js" type="module"></script>
   <script src="./frota-mapa.js" type="module"></script>
+  <script src="./apontamento.js" type="module"></script>
   <script src="./ativos-ti.js" type="module"></script>
   <script src="./colaboradores.js" type="module"></script>
   <script src="./helpdesk-chamados.js" type="module"></script>

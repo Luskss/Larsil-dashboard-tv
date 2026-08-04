@@ -67,6 +67,10 @@ export async function consultarFrotaLideres() {
   return pedir("/api/frota-lideres");
 }
 
+export async function consultarApontamento() {
+  return pedir("/api/apontamento");
+}
+
 export async function consultarVeiculosReservas() {
   return pedir("/api/veiculos-reservas");
 }

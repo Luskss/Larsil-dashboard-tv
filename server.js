@@ -18,6 +18,7 @@
 //   GET  /api/frota              -> resumo da frota (SQL Server, dbo.FROTA)
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
 //   GET  /api/frota-lideres      -> qtd de veículos por coordenador (dbo.FROTA x dbo.TICKET)
+//   GET  /api/apontamento        -> última produção apontada por equipe (dbo.ORGANOGRAMA x dbo.BOLETIM_DIARIO x dbo.FOLGAS)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/colaboradores      -> quadro por coordenador, com as classes (SQL Server, dbo.COLABORADORES)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
@@ -1098,6 +1099,291 @@ app.get("/api/frota-lideres", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar a frota por líder:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar a frota por líder" });
+  }
+});
+
+// ===== Apontamento das equipes (dbo.ORGANOGRAMA x dbo.BOLETIM_DIARIO x dbo.FOLGAS) =====
+// Radar de equipe parada: quando cada equipe apontou produção pela última vez.
+// Toda a regra fica aqui — a tela só pinta o que vem pronto.
+//
+// Armadilhas desta base (confirmadas no banco antes de escrever isto):
+//
+//  1. BOLETIM_DIARIO.[LÍDER] é o CÓDIGO DA EQUIPE, não a pessoa; a pessoa está
+//     em NOME_DO_LIDER. FOLGAS.LIDER segue a mesma convenção. O casamento por
+//     equipe leva um OR pelo nome porque a base tem código de equipe lançado
+//     que não existe no ORGANOGRAMA (ex.: 700AC, 138 boletins em 15 dias, do
+//     líder cuja equipe cadastrada é 542AB) — sem o OR ele apareceria parado
+//     há 40 dias tendo apontado ontem.
+//  2. Colunas acentuadas exigem colchetes: [DATA_EXECUÇÃO], [PRODUÇÃO], [LÍDER].
+//  3. A base tem padding: todo join e todo filtro passa por LTRIM(RTRIM(...)).
+//  4. Quem deve apontar é quem tem ORGANOGRAMA.APONTA = 'DIARIO' (47 das 78
+//     linhas). COBRANCA_PAUSADA está zerado para todo mundo e não filtra nada;
+//     APONTA = 'NAO' é que separa brigada de incêndio e administrativo, que
+//     nunca apontaram e só entrariam na tela como ruído permanente.
+//
+// A matriz é MENSAL, igual à tela original: as colunas vão do dia 1º ao último
+// dia do mês, e os dias que ainda não chegaram entram como caixa vazia. O mês
+// inteiro sempre na tela deixa a largura das colunas estável do começo ao fim
+// e dá, de bater o olho, a noção de quanto do mês já passou.
+//
+// A CONTAGEM de dias parados, essa sim, não pode depender do recorte exibido:
+// no dia 1º ela enxergaria um dia só e uma equipe parada há três semanas
+// apareceria zerada — verde na tela. Roda sempre sobre a janela abaixo,
+// atravessando a virada do mês, independente do que está sendo desenhado.
+const APONTAMENTO_LOOKBACK_DIAS = 45;
+
+// Sábado ainda é dia cobrado; domingo não. Índice de Date.getDay().
+const DOMINGO = 0;
+
+// Dias ÚTEIS parados -> cor do semáforo (regra do doc de apontamento).
+function estadoApontamento(diasUteis, nunca) {
+  if (nunca) return "nunca";
+  if (diasUteis <= 1) return "ok";
+  if (diasUteis <= 3) return "atencao";
+  return "critico";
+}
+
+const iso = (data) => data.toISOString().slice(0, 10);
+
+app.get("/api/apontamento", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    const dados = await comCacheSql("apontamento", async () => {
+      // A data de referência é calculada AQUI, não com GETDATE(): o servidor
+      // roda em UTC no Railway e viraria o dia três horas antes de Brasília.
+      // E é ONTEM, não hoje — o boletim do dia ainda está sendo lançado, então
+      // cobrar hoje pintaria a tela de vermelho toda manhã.
+      const agora = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+      const ate = new Date(Date.UTC(agora.getFullYear(), agora.getMonth(), agora.getDate() - 1));
+
+      // O que a tela mostra: o mês inteiro da data de referência. Dia 0 do mês
+      // seguinte é o último dia deste — resolve fevereiro e ano bissexto sem
+      // tabela de dias por mês.
+      const inicioMes = new Date(Date.UTC(ate.getUTCFullYear(), ate.getUTCMonth(), 1));
+      const fimMes = new Date(Date.UTC(ate.getUTCFullYear(), ate.getUTCMonth() + 1, 0));
+
+      // O que a conta enxerga: sempre os últimos 45 dias, atravessando a
+      // virada do mês. As consultas puxam do mais antigo dos dois inícios.
+      const inicioCalculo = new Date(ate);
+      inicioCalculo.setUTCDate(inicioCalculo.getUTCDate() - (APONTAMENTO_LOOKBACK_DIAS - 1));
+      const de = inicioCalculo < inicioMes ? inicioCalculo : inicioMes;
+
+      const pool = await conectarSql();
+      const req1 = pool.request();
+      req1.input("ate", sql.Date, iso(ate));
+
+      // Sai do ORGANOGRAMA com OUTER APPLY (não do boletim com GROUP BY): a
+      // equipe que parou de apontar não tem linha no fato, e é justamente a
+      // que precisa aparecer.
+      const { recordset: linhas } = await req1.query(
+        `WITH equipes AS (
+           SELECT LTRIM(RTRIM(o.EQUIPE)) AS EQUIPE,
+                  MAX(LTRIM(RTRIM(o.LIDER)))                    AS LIDER,
+                  MAX(LTRIM(RTRIM(ISNULL(o.COORDENADOR, ''))))  AS COORDENADOR,
+                  MAX(LTRIM(RTRIM(ISNULL(o.SUPERVISOR, ''))))   AS SUPERVISOR,
+                  MAX(LTRIM(RTRIM(ISNULL(o.ATIVIDADE, ''))))    AS ATIVIDADE,
+                  MAX(LTRIM(RTRIM(ISNULL(o.PROJETO, ''))))      AS PROJETO
+             FROM dbo.ORGANOGRAMA o
+            WHERE LTRIM(RTRIM(ISNULL(o.EQUIPE, ''))) <> ''
+              AND LTRIM(RTRIM(ISNULL(o.LIDER, ''))) <> ''
+              AND LTRIM(RTRIM(ISNULL(o.PROJETO, ''))) <> '400'
+              AND ISNULL(o.COBRANCA_PAUSADA, 0) = 0
+              AND UPPER(LTRIM(RTRIM(ISNULL(o.APONTA, '')))) = 'DIARIO'
+            GROUP BY LTRIM(RTRIM(o.EQUIPE))
+         )
+         SELECT e.EQUIPE, e.LIDER, e.COORDENADOR, e.SUPERVISOR, e.ATIVIDADE, e.PROJETO,
+                -- Sai como texto, não como date: o driver devolveria um Date do
+                -- JS à meia-noite, e num servidor a leste de Greenwich o
+                -- toISOString() dele cairia no dia anterior.
+                CONVERT(char(10), u.DATA_EXECUCAO, 23) AS ULTIMO,
+                u.EQUIPE_BOLETIM, u.SERVICO, u.FAZENDA, u.TALHAO,
+                u.PRODUCAO, u.STATUS,
+                DATEDIFF(day, u.DATA_EXECUCAO, @ate) AS DIAS_PARADO
+           FROM equipes e
+          OUTER APPLY (
+            SELECT TOP 1
+                   CONVERT(date, b.[DATA_EXECUÇÃO])          AS DATA_EXECUCAO,
+                   LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))       AS EQUIPE_BOLETIM,
+                   LTRIM(RTRIM(ISNULL(b.[SERVIÇO], '')))     AS SERVICO,
+                   LTRIM(RTRIM(ISNULL(b.FAZENDA, '')))       AS FAZENDA,
+                   LTRIM(RTRIM(ISNULL(b.TALHAO, '')))        AS TALHAO,
+                   b.[PRODUÇÃO]                              AS PRODUCAO,
+                   LTRIM(RTRIM(ISNULL(b.STATUS, '')))        AS STATUS
+              FROM dbo.BOLETIM_DIARIO b
+             WHERE (LTRIM(RTRIM(ISNULL(b.[LÍDER], ''))) = e.EQUIPE
+                 OR LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, ''))) = e.LIDER)
+               AND b.[DATA_EXECUÇÃO] < DATEADD(day, 1, @ate)
+             ORDER BY b.[DATA_EXECUÇÃO] DESC, b.ID DESC
+          ) u`
+      );
+
+      // Boletins da janela, para o mini-heatmap. Vem por equipe E por nome
+      // porque o casamento acima também aceita os dois (armadilha 1).
+      const req2 = pool.request();
+      req2.input("de", sql.Date, iso(de));
+      req2.input("ate", sql.Date, iso(ate));
+      const { recordset: celulas } = await req2.query(
+        `SELECT LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))        AS EQUIPE,
+                LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))  AS LIDER,
+                CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)   AS DIA,
+                COUNT(*)                                   AS QTD
+           FROM dbo.BOLETIM_DIARIO b
+          WHERE b.[DATA_EXECUÇÃO] >= @de
+            AND b.[DATA_EXECUÇÃO] <  DATEADD(day, 1, @ate)
+          GROUP BY LTRIM(RTRIM(ISNULL(b.[LÍDER], ''))),
+                   LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, ''))),
+                   CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)`
+      );
+
+      // Folgas da janela: sem elas, férias e atestado viram "equipe parada".
+      const req3 = pool.request();
+      req3.input("de", sql.Date, iso(de));
+      req3.input("ate", sql.Date, iso(ate));
+      const { recordset: folgas } = await req3.query(
+        `SELECT LTRIM(RTRIM(ISNULL(f.LIDER, '')))          AS EQUIPE,
+                LTRIM(RTRIM(ISNULL(f.NOME_DO_LIDER, '')))  AS LIDER,
+                CONVERT(char(10), f.DATA, 23)              AS DIA,
+                LTRIM(RTRIM(ISNULL(f.EVENTO, '')))         AS EVENTO,
+                LTRIM(RTRIM(ISNULL(f.MOTIVO, '')))         AS MOTIVO
+           FROM dbo.FOLGAS f
+          WHERE f.DATA >= @de AND f.DATA <= @ate`
+      );
+
+      // Duas listas de datas, de propósito (ver o comentário do lookback):
+      // `dias` é o que a tela desenha, `diasCalculo` é o que a conta enxerga.
+      const listarDias = (inicio, fim) => {
+        const lista = [];
+        for (const d = new Date(inicio); d <= fim; d.setUTCDate(d.getUTCDate() + 1)) {
+          lista.push({ iso: iso(d), dia: d.getUTCDate(), semana: d.getUTCDay() });
+        }
+        return lista;
+      };
+      const isoAte = iso(ate);
+      const dias = listarDias(inicioMes, fimMes)
+        .map((d) => ({ ...d, futuro: d.iso > isoAte }));
+      const diasCalculo = listarDias(inicioCalculo, ate);
+
+      // Índices por código de equipe E por nome de líder — as duas chaves que
+      // o casamento aceita.
+      const porChave = (registros, montar) => {
+        const mapa = new Map();
+        for (const r of registros) {
+          for (const chave of [r.EQUIPE, r.LIDER]) {
+            if (!chave) continue;
+            if (!mapa.has(chave)) mapa.set(chave, new Map());
+            mapa.get(chave).set(r.DIA, montar(r, mapa.get(chave).get(r.DIA)));
+          }
+        }
+        return mapa;
+      };
+      const boletins = porChave(celulas, (r, atual) => (atual || 0) + r.QTD);
+      const eventos = porChave(folgas, (r) => ({ evento: r.EVENTO || "FOLGA", motivo: r.MOTIVO }));
+
+      const equipes = linhas.map((l) => {
+        const doBoletim = boletins.get(l.EQUIPE) || boletins.get(l.LIDER) || new Map();
+        const daFolga = eventos.get(l.EQUIPE) || eventos.get(l.LIDER) || new Map();
+        const ultimo = l.ULTIMO || null;
+
+        // Uma célula por dia do mês: dia que ainda não chegou, apontou, evento
+        // registrado, não apontou, ou domingo (que não é cobrado).
+        const grade = dias.map((d) => {
+          if (d.futuro) return { dia: d.iso, estado: "futuro" };
+          const qtd = doBoletim.get(d.iso) || 0;
+          const evento = daFolga.get(d.iso);
+          if (qtd > 0) return { dia: d.iso, estado: "b", qtd };
+          if (evento) return { dia: d.iso, estado: "f", evento: evento.evento, motivo: evento.motivo };
+          if (d.semana === DOMINGO) return { dia: d.iso, estado: "x" };
+          return { dia: d.iso, estado: "n" };
+        });
+
+        // Quebra dos dias desde o último apontamento, do dia seguinte a ele
+        // até a data de referência. São três baldes, e a separação é o ponto:
+        // o que decide a cor é só o primeiro — senão toda equipe de férias
+        // entraria na tela como crítica. Os outros dois são a JUSTIFICATIVA
+        // que a tela de pendências mostra, para o número não ser um oráculo.
+        //
+        // Roda sobre diasCalculo, NÃO sobre a grade: a grade é o mês, e no
+        // início dele ela não alcança quem parou no mês passado.
+        let diasUteis = 0;      // sem boletim e sem evento -> é o que se cobra
+        let justificados = 0;   // tem evento registrado (folga, férias, SA...)
+        let domingos = 0;       // não é dia cobrado
+        let ultimoEvento = null;
+        for (const d of diasCalculo) {
+          if (ultimo && d.iso <= ultimo) continue;
+          const evento = daFolga.get(d.iso);
+          if (evento) {
+            justificados++;
+            ultimoEvento = { dia: d.iso, evento: evento.evento, motivo: evento.motivo };
+            continue;
+          }
+          if (d.semana === DOMINGO) { domingos++; continue; }
+          diasUteis++;
+        }
+        // Sem nenhum boletim na janela o laço acima só enxerga o lookback; o
+        // corrido (que pode ser bem maior) é quem manda nesse caso.
+        if (!ultimo) diasUteis = Math.max(diasUteis, APONTAMENTO_LOOKBACK_DIAS);
+
+        const eventoHoje = daFolga.get(iso(ate)) || null;
+
+        return {
+          equipe: l.EQUIPE,
+          lider: l.LIDER,
+          coordenador: l.COORDENADOR,
+          supervisor: l.SUPERVISOR,
+          atividade: l.ATIVIDADE,
+          projeto: l.PROJETO,
+          ultimo,
+          // Quando o boletim veio lançado sob outro código de equipe, a tela
+          // mostra qual — é o sintoma da armadilha 1 aparecendo na base.
+          viaEquipe: l.EQUIPE_BOLETIM && l.EQUIPE_BOLETIM !== l.EQUIPE ? l.EQUIPE_BOLETIM : null,
+          diasParado: l.DIAS_PARADO ?? null,
+          diasUteisParado: diasUteis,
+          // A conta aberta, para a tela de pendências poder explicar o número
+          // em vez de só exibi-lo.
+          desdeUltimo: { uteisSemApontar: diasUteis, justificados, domingos },
+          ultimoEvento,
+          estado: estadoApontamento(diasUteis, !ultimo),
+          evento: eventoHoje ? eventoHoje.evento : null,
+          motivo: eventoHoje ? eventoHoje.motivo : null,
+          servico: l.SERVICO || null,
+          fazenda: l.FAZENDA || null,
+          talhao: l.TALHAO || null,
+          producao: l.PRODUCAO == null ? null : Number(l.PRODUCAO),
+          status: l.STATUS || null,
+          grade,
+        };
+      });
+
+      // Urgência primeiro: nunca apontou, depois quem está parado há mais
+      // dias úteis, e o corrido como critério de desempate.
+      const peso = { nunca: 0, critico: 1, atencao: 2, ok: 3 };
+      equipes.sort((a, b) =>
+        peso[a.estado] - peso[b.estado] ||
+        b.diasUteisParado - a.diasUteisParado ||
+        (b.diasParado ?? 0) - (a.diasParado ?? 0) ||
+        a.equipe.localeCompare(b.equipe)
+      );
+
+      const resumo = { total: equipes.length, ok: 0, atencao: 0, critico: 0, nunca: 0 };
+      for (const e of equipes) resumo[e.estado]++;
+      resumo.aderencia = resumo.total ? Math.round((resumo.ok / resumo.total) * 100) : 0;
+
+      return {
+        dataRef: iso(ate),
+        mes: iso(inicioMes).slice(0, 7), // "YYYY-MM" — a tela escreve o nome
+        lookbackDias: APONTAMENTO_LOOKBACK_DIAS,
+        dias,
+        resumo,
+        equipes,
+      };
+    });
+    res.json(dados);
+  } catch (erro) {
+    console.error("Erro ao consultar o apontamento:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar o banco de apontamento" });
   }
 });
 

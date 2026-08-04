@@ -26,7 +26,10 @@ const INTERVALO_SINCRONIA_MS = 30 * 1000;
 const CHAVE_ROTACAO = "rotacao-segundos";
 const ROTACAO_SEGUNDOS_PADRAO = 30;
 
-function segundosRotacao() {
+// Exportada para a vista Apontamento: ela divide o tempo da rotação entre os
+// coordenadores e paga a rolagem automática com essa fatia, para as duas
+// coisas não andarem em ritmos diferentes.
+export function segundosRotacao() {
   const salvo = localStorage.getItem(CHAVE_ROTACAO);
   if (salvo === null) return ROTACAO_SEGUNDOS_PADRAO;
   const segundos = Number(salvo);
@@ -38,6 +41,8 @@ export const PAGINAS = [
   { rotulo: "Frotas",       arquivo: "frotas-estatisticas.html", vista: "vista-frotas",    hash: "#frotas" },
   { rotulo: "Frota por Líder", arquivo: "frota-lideres.html",    vista: "vista-lideres",   hash: "#lideres" },
   { rotulo: "Mapa da Frota",arquivo: "frota-mapa.html",          vista: "vista-mapa",      hash: "#mapa" },
+  { rotulo: "Apontamento",  arquivo: "apontamento.html",         vista: "vista-apontamento", hash: "#apontamento" },
+  { rotulo: "Apontamento — Pendências", arquivo: "apontamento-pendencias.html", vista: "vista-pendencias", hash: "#pendencias" },
   { rotulo: "Ativos de TI", arquivo: "ativos-ti.html",           vista: "vista-ativos",    hash: "#ativos" },
   { rotulo: "Colaboradores",arquivo: "colaboradores.html",       vista: "vista-colaboradores", hash: "#colaboradores" },
   { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },
