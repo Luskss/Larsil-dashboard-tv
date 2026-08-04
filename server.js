@@ -1543,7 +1543,39 @@ app.get("/api/colaboradores", async (_req, res) => {
 // status. ID_SOLICITANTE, ATRIBUIDO_A e RESOLVIDO_POR são IDs de
 // dbo.HELPDESK_USUARIOS, por isso os JOINs para trazer o nome de quem abriu,
 // de quem atende e de quem resolveu.
-const STATUS_HELPDESK = ["ABERTO", "EM_ATENDIMENTO", "RESOLVIDO"];
+//
+// As colunas do painel NÃO são os status do helpdesk: o de-para está em
+// COLUNA_POR_STATUS, logo abaixo, e é onde um status novo entra.
+// As colunas do quadro, na ordem em que a tela as mostra.
+const COLUNAS_HELPDESK = ["ABERTO", "EM_ATENDIMENTO", "RESOLVIDO"];
+
+// De-para do STATUS cru da tabela para a coluna do quadro. Um status novo no
+// helpdesk que não esteja aqui simplesmente não aparece no painel — é a trava
+// que impede uma coluna fantasma surgir sozinha na TV.
+//
+// AGUARDANDO_APROVACAO nasceu depois no helpdesk e cai em "Em atendimento"
+// (decisão do Lucas): para quem olha o painel, chamado esperando aprovação é
+// chamado em curso, não um quarto estado. FECHADO fica de fora de propósito —
+// são 282 e nenhum deles é notícia.
+const COLUNA_POR_STATUS = {
+  ABERTO: "ABERTO",
+  EM_ATENDIMENTO: "EM_ATENDIMENTO",
+  AGUARDANDO_APROVACAO: "EM_ATENDIMENTO",
+  RESOLVIDO: "RESOLVIDO",
+};
+
+// O de-para vira um CASE no SQL para o banco já agrupar e numerar pela COLUNA.
+// Fazer a soma no JS seria mais simples e estaria errado: o ROW_NUMBER daria
+// os 5 mais recentes DE CADA status cru, e "Em atendimento" viria com 10 —
+// cinco em atendimento e cinco aguardando aprovação — em vez dos 5 mais
+// recentes da coluna. `alias` é o prefixo da tabela ("c." ou "").
+const colunaHelpdeskSql = (alias = "") =>
+  `CASE UPPER(LTRIM(RTRIM(${alias}STATUS)))
+     ${Object.entries(COLUNA_POR_STATUS)
+       .map(([bruto, coluna]) => `WHEN '${bruto}' THEN '${coluna}'`)
+       .join("\n     ")}
+   END`;
+
 const CHAMADOS_POR_COLUNA = 5;
 
 app.get("/api/helpdesk-chamados", async (_req, res) => {
@@ -1556,19 +1588,19 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
     // .chamado--novo / o toast no index.html), então atraso se nota.
     const dados = await comCacheSql("helpdesk-chamados", async () => {
       const pool = await conectarSql();
-      const statusIn = STATUS_HELPDESK.map((s) => `'${s}'`).join(", ");
+      const statusIn = Object.keys(COLUNA_POR_STATUS).map((s) => `'${s}'`).join(", ");
 
-      // ROW_NUMBER por status: cada coluna recebe seus N chamados mais recentes
+      // ROW_NUMBER pela coluna: cada uma recebe seus N chamados mais recentes
       // (resolvidos ordenam por RESOLVIDO_EM; os demais, por CRIADO_EM).
       const { recordset } = await pool.request().query(
         `SELECT id, titulo, prioridade, status, criadoEm, resolvidoEm, solicitante, atribuidoA, resolvidoPor
            FROM (
              SELECT c.ID AS id, c.TITULO AS titulo, c.PRIORIDADE AS prioridade,
-                    UPPER(LTRIM(RTRIM(c.STATUS))) AS status,
+                    ${colunaHelpdeskSql("c.")} AS status,
                     c.CRIADO_EM AS criadoEm, c.RESOLVIDO_EM AS resolvidoEm,
                     usol.NOME AS solicitante, ua.NOME AS atribuidoA, ur.NOME AS resolvidoPor,
                     ROW_NUMBER() OVER (
-                      PARTITION BY UPPER(LTRIM(RTRIM(c.STATUS)))
+                      PARTITION BY ${colunaHelpdeskSql("c.")}
                       ORDER BY COALESCE(c.RESOLVIDO_EM, c.CRIADO_EM) DESC
                     ) AS rn
                FROM dbo.HELPDESK_CHAMADOS c
@@ -1581,18 +1613,18 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
           ORDER BY COALESCE(resolvidoEm, criadoEm) DESC`
       );
 
-      // Total por status (as colunas mostram só os recentes; o contador, tudo).
+      // Total por coluna (as colunas mostram só os recentes; o contador, tudo).
       const totais = await pool.request().query(
-        `SELECT UPPER(LTRIM(RTRIM(STATUS))) AS status, COUNT(*) AS qtd
+        `SELECT ${colunaHelpdeskSql()} AS status, COUNT(*) AS qtd
            FROM dbo.HELPDESK_CHAMADOS
           WHERE UPPER(LTRIM(RTRIM(STATUS))) IN (${statusIn})
-          GROUP BY UPPER(LTRIM(RTRIM(STATUS)))`
+          GROUP BY ${colunaHelpdeskSql()}`
       );
 
-      const colunas = Object.fromEntries(STATUS_HELPDESK.map((s) => [s, []]));
+      const colunas = Object.fromEntries(COLUNAS_HELPDESK.map((s) => [s, []]));
       for (const linha of recordset) colunas[linha.status]?.push(linha);
 
-      const contagem = Object.fromEntries(STATUS_HELPDESK.map((s) => [s, 0]));
+      const contagem = Object.fromEntries(COLUNAS_HELPDESK.map((s) => [s, 0]));
       for (const linha of totais.recordset) {
         if (linha.status in contagem) contagem[linha.status] = linha.qtd;
       }
