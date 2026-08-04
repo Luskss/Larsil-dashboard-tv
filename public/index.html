@@ -1471,19 +1471,24 @@
       overflow-y: auto;
       margin-top: 1rem;
       display: grid;
-      /* 19rem cabe quatro colunas na largura da TV; com 24rem cabiam três, e
-         a sétima pendência caía numa terceira fileira cortada pelo rodapé. */
-      grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+      /* O máximo é uma LARGURA, não 1fr. Com 1fr as colunas esticavam para
+         ocupar toda a linha e, na TV (viewport menor que o monitor, poucas
+         colunas), cada card virava uma faixa larga com o texto perdido no
+         meio. Agora o card tem teto e a sobra vai para as laterais. */
+      grid-template-columns: repeat(auto-fit, minmax(15rem, 18rem));
+      justify-content: center;
       grid-auto-rows: min-content;
       gap: 1rem;
       padding: .25rem;
-      /* Com os cards enxutos sobra altura, e a grade encostada no topo deixava
-         meia tela vazia. `safe` é o que impede o estrago quando NÃO sobra: sem
-         ele, uma lista maior que a tela ficaria centralizada com o topo
-         cortado, fora do alcance da rolagem. Navegador que não conheça a
-         palavra ignora a linha e volta ao alinhamento no topo. */
-      align-content: safe center;
     }
+    /* Centralizado na vertical só quando tudo cabe — a classe é ligada pelo
+       apontamento.js, que já mede o transbordo para decidir a rolagem.
+       Em CSS puro isto seria `align-content: safe center`, mas a palavra
+       `safe` é recente e o Chromium da TV a ignora: a grade ficava encostada
+       no topo lá, com meia tela vazia embaixo. Sem o `safe` (ou seja, com
+       `center` puro), uma lista maior que a tela ficaria centralizada com o
+       topo cortado e fora do alcance da rolagem — daí a decisão no JS. */
+    .pd-cards--centrado { align-content: center; }
     .pd-card {
       display: flex;
       flex-direction: column;

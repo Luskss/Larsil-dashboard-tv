@@ -517,11 +517,17 @@ function cicloDoGrupo() {
 
 // Pendências não alterna nada: a rolagem tem a fatia inteira da rotação.
 function rolarPendencias() {
+  const alvo = document.querySelector("#pd-cards");
+
+  // Centraliza na vertical só quando tudo cabe. Mede sem a classe, senão a
+  // medida sairia influenciada pelo centramento da passagem anterior.
+  // (Em CSS isto seria `align-content: safe center`, que o Chromium da TV
+  // ignora — ver o comentário em .pd-cards--centrado no index.html.)
+  alvo.classList.remove("pd-cards--centrado");
+  alvo.classList.toggle("pd-cards--centrado", alvo.scrollHeight - alvo.clientHeight <= 2);
+
   const total = segundosRotacao() * 1000;
-  iniciarRolagem(
-    document.querySelector("#pd-cards"),
-    Math.max(SLOT_MINIMO_MS, total > 0 ? total : SLOT_MINIMO_MS)
-  );
+  iniciarRolagem(alvo, Math.max(SLOT_MINIMO_MS, total > 0 ? total : SLOT_MINIMO_MS));
 }
 
 async function atualizar() {
