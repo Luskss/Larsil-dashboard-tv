@@ -213,6 +213,7 @@ let assinaturaAtual = null;
 let dadosAtuais = null;
 let grupos = [];      // um por coordenador, já na ordem de exibição
 let grupoAtual = 0;
+let pdGrupoAtual = 0; // a vista Pendências alterna no ritmo dela, independente
 
 // Quebra as equipes por coordenador, preservando a ordem de urgência que veio
 // do servidor dentro de cada grupo.
@@ -310,9 +311,13 @@ const SELO = { atencao: "Atenção", critico: "Crítico", nunca: "Sem apontar" }
 // são as mesmas da matriz — azul folga, laranja sem atividade, cinza não
 // aplica —, então quem viu um F azul lá reconhece o card aqui.
 //
-// O selo continua escrito CRÍTICO/ATENÇÃO em cima da cor nova, e é de
-// propósito: a folga não zera a cobrança. O 700AK tem 7 dias cobrados apesar
-// dos 7 de folga, e o número grande continua sendo 7.
+// Com motivo registrado, o selo passa a ser o MOTIVO (FOLGA, FÉRIAS...) no
+// lugar de CRÍTICO/ATENÇÃO: no card azul o alarme contradizia a cor, e ler
+// "CRÍTICO" numa equipe de folga registrada mandava cobrar quem não devia.
+// A cobrança não sumiu — ela é o número grande, que continua sendo os dias
+// úteis cobrados (o 700AK segue com 12 apesar da folga). CRÍTICO/ATENÇÃO
+// continuam no selo de quem não tem justificativa nenhuma, que é o alarme
+// de verdade.
 function faixaDeMotivo(equipe) {
   const evento = equipe.evento || equipe.ultimoEvento?.evento || "";
   const e = evento.trim().toUpperCase();
@@ -322,8 +327,27 @@ function faixaDeMotivo(equipe) {
     return { classe: "pd-motivo--sem", cardClasse: "", texto: "Sem justificativa", extra: "nenhum evento registrado" };
   }
 
+  // Férias escritas no MOTIVO mandam mais que o evento lançado. O 820AD vinha
+  // como "SEM ATIVIDADE · ferias" e lia como equipe parada sem explicação —
+  // mas férias é justificativa, então a faixa passa a dizer FÉRIAS, em azul,
+  // como qualquer outra folga registrada. O número grande de dias cobrados
+  // continua o mesmo: a folga explica, não zera a cobrança.
+  const motivo = equipe.evento ? equipe.motivo : equipe.ultimoEvento?.motivo;
+  const ferias = /F[ÉE]RIAS/.test(`${e} ${String(motivo || "").toUpperCase()}`);
+  if (ferias) {
+    const comum = { classe: "pd-motivo--folga", cardClasse: "pd-card--folga", selo: "Férias" };
+    return equipe.evento
+      ? { ...comum, texto: "Férias", extra: "na data de referência" }
+      : { ...comum, texto: `Férias até ${dataBR(equipe.ultimoEvento.dia)}`, extra: "" };
+  }
+
   const tom = e === "SEM ATIVIDADE" ? "parada" : e === "NÃO APLICA" ? "neutro" : "folga";
-  const comum = { classe: `pd-motivo--${tom}`, cardClasse: `pd-card--${tom}` };
+  // Selo do card ganha a palavra do evento (Folga, Atestado, Viagem...) só nos
+  // tons de folga: no card azul, o "CRÍTICO" sozinho contradizia a cor. Nos
+  // tons parada/neutro a faixa laranja/cinza já diz o que é, e repetir "SEM
+  // ATIVIDADE" no selo estouraria a linha do topo.
+  const selo = tom === "folga" ? e.split(/\s+/)[0] : "";
+  const comum = { classe: `pd-motivo--${tom}`, cardClasse: `pd-card--${tom}`, selo };
 
   // Evento na própria data de referência: está acontecendo agora, então o
   // motivo dele é o que interessa. Evento mais antigo vira "até <dia>".
@@ -366,9 +390,25 @@ function justificativaDe(equipe) {
   return linhas;
 }
 
+// Bolinhas do coordenador no ar, iguais às da matriz (ver desenharIndicador).
+function desenharIndicadorPendencias() {
+  const alvo = document.querySelector("#pd-indicador");
+  alvo.innerHTML = grupos.length < 2 ? "" : grupos
+    .map((_, i) => `<span class="ap-ponto${i === pdGrupoAtual ? " ap-ponto--ativo" : ""}"></span>`)
+    .join("");
+}
+
 function desenharPendencias() {
-  if (!dadosAtuais) return;
-  const { dataRef, mes, resumo, equipes } = dadosAtuais;
+  if (!dadosAtuais || !grupos.length) return;
+  const { dataRef, mes } = dadosAtuais;
+
+  // Um coordenador de cada vez, como a matriz: o placar, o semáforo e os cards
+  // são todos do grupo no ar. Ver montarGrupos() para a ordem.
+  const grupo = grupos[pdGrupoAtual];
+  const { resumo, equipes } = grupo;
+
+  document.querySelector("#pd-coordenador").textContent = grupo.coordenador;
+  desenharIndicadorPendencias();
 
   const aderencia = document.querySelector("#pd-aderencia");
   aderencia.textContent = `${resumo.aderencia}%`;
@@ -406,7 +446,9 @@ function desenharPendencias() {
         <div class="pd-card__topo">
           <span class="pd-card__codigo">${escapar(equipe.equipe)}</span>
           <span class="pd-card__lider" title="${escapar(equipe.lider)}">${escapar(primeiroEUltimo(equipe.lider))}</span>
-          <span class="pd-card__selo">${SELO[equipe.estado] || equipe.estado}</span>
+          <span class="pd-card__selo">${escapar(
+            motivo.selo || SELO[equipe.estado] || equipe.estado
+          )}</span>
         </div>
         <div class="pd-card__sub">
           ${escapar(primeiroEUltimo(equipe.coordenador) || "sem coordenador")}
@@ -438,6 +480,7 @@ function desenharPendencias() {
 let rolagemRaf = null;
 let rolagemTimer = null;
 let trocaTimer = null;
+let pdTrocaTimer = null;
 let vistaVisivel = false;
 let pendenciasVisivel = false;
 let temDados = false;
@@ -515,8 +558,9 @@ function cicloDoGrupo() {
   trocaTimer = setTimeout(() => alternarGrupo(cicloDoGrupo), fatia);
 }
 
-// Pendências não alterna nada: a rolagem tem a fatia inteira da rotação.
-function rolarPendencias() {
+// Pendências também alterna coordenador: a fatia é a mesma da matriz, e a
+// rolagem dos cards cabe dentro dela.
+function rolarPendencias(fatiaMs) {
   const alvo = document.querySelector("#pd-cards");
 
   // Centraliza na vertical só quando tudo cabe. Mede sem a classe, senão a
@@ -526,8 +570,27 @@ function rolarPendencias() {
   alvo.classList.remove("pd-cards--centrado");
   alvo.classList.toggle("pd-cards--centrado", alvo.scrollHeight - alvo.clientHeight <= 2);
 
-  const total = segundosRotacao() * 1000;
-  iniciarRolagem(alvo, Math.max(SLOT_MINIMO_MS, total > 0 ? total : SLOT_MINIMO_MS));
+  iniciarRolagem(alvo, fatiaMs);
+}
+
+// Troca o coordenador da vista Pendências com o mesmo fade da matriz.
+function alternarGrupoPendencias(aoTerminar) {
+  if (grupos.length < 2) return aoTerminar?.();
+  const alvo = document.querySelector("#pd-cards");
+  alvo.classList.add("pd-cards--trocando");
+  setTimeout(() => {
+    pdGrupoAtual = (pdGrupoAtual + 1) % grupos.length;
+    desenharPendencias();
+    alvo.classList.remove("pd-cards--trocando");
+    aoTerminar?.();
+  }, DURACAO_FADE_MS);
+}
+
+function cicloPendencias() {
+  clearTimeout(pdTrocaTimer);
+  const fatia = fatiaDoGrupo();
+  rolarPendencias(fatia);
+  pdTrocaTimer = setTimeout(() => alternarGrupoPendencias(cicloPendencias), fatia);
 }
 
 async function atualizar() {
@@ -539,6 +602,7 @@ async function atualizar() {
     // Uma atualização de dados não pode empurrar quem está na tela para outro
     // coordenador: só corrige o índice se o grupo tiver sumido do cadastro.
     if (grupoAtual >= grupos.length) grupoAtual = 0;
+    if (pdGrupoAtual >= grupos.length) pdGrupoAtual = 0;
     desenharGrupo();
     desenharPendencias();
 
@@ -550,7 +614,7 @@ async function atualizar() {
     const primeiroDesenho = !temDados;
     temDados = true;
     if (primeiroDesenho && vistaVisivel) cicloDoGrupo();
-    if (primeiroDesenho && pendenciasVisivel) rolarPendencias();
+    if (primeiroDesenho && pendenciasVisivel) cicloPendencias();
   } catch (erro) {
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar o apontamento das equipes.");
   }
@@ -581,17 +645,20 @@ observarVista("vista-apontamento", {
   },
 });
 
-// A vista de Pendências não alterna coordenador — mostra os dois juntos, que é
-// a graça dela. Só a rolagem, com a fatia inteira da rotação, para o dia em
-// que houver mais pendências do que cabe na tela. Hoje são 7 e cabem.
+// Pendências alterna coordenador igual à Apontamento: a fatia da rotação
+// dividida entre eles, e volta ao primeiro a cada entrada — quem chega na tela
+// vê sempre a mesma ordem.
 observarVista("vista-pendencias", {
   aoEntrar() {
     pendenciasVisivel = true;
+    pdGrupoAtual = 0;
     desenharPendencias();
-    rolarPendencias();
+    cicloPendencias();
   },
   aoSair() {
     pendenciasVisivel = false;
+    clearTimeout(pdTrocaTimer);
+    pdTrocaTimer = null;
     pararRolagem();
   },
 });

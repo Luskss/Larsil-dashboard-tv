@@ -1260,14 +1260,37 @@
     .kpi--ap-nunca   { --cor-kpi: var(--text-dim); }
 
     /* A matriz. Rola só se não couber; o JS já corta a lista no que cabe. */
+    /* A matriz é a ÚNICA ilha clara do painel: fundo branco e texto preto, a
+       pedido do Lucas — de longe, na TV, a grade de quadradinhos coloridos lê
+       melhor sobre branco do que sobre o verde-escuro do tema.
+       Os tokens são redefinidos AQUI, no contêiner, em vez de trocar cor por
+       cor nas regras abaixo: tudo o que está dentro (cabeçalho fixo, bordas,
+       caixas vazias, semáforos) já consome var(--text)/var(--border)/etc., e
+       assim a tabela inteira vira clara de uma vez, sem duplicar seletor.
+       Os semáforos entram nas versões escurecidas: os tons claros do tema
+       foram feitos para brilhar sobre fundo escuro e, virando texto preto
+       sobre branco (as colunas S/ apontar e Último), sumiam. */
     .ap-matriz {
+      --text:     #10151a;
+      --text-dim: #4b5560;
+      --border:   #d3d9e0;
+      --ap-vazio: #eef1f4;
+      --ap-cabecalho: #f2f4f7;  /* opaco: tapa as linhas rolando por baixo */
+      --ap-ouro:    #8a6a12;
+      --ap-ok:      #2e7d32;
+      --ap-atencao: #b3760a;
+      --ap-critico: #c62828;
+      --ap-evento:  #1565c0;
+      --ap-parada:  #d35400;
+
       flex: 1;
       min-height: 0;
       overflow-y: auto;
       margin-top: .75rem;
       border: 2px solid var(--border);
       border-radius: 1.25rem;
-      background: var(--surface);
+      background: #fff;
+      color: var(--text);
       transition: opacity .25s ease; /* casa com DURACAO_FADE_MS */
     }
     /* Meio da troca de coordenador: a tabela some, é remontada e volta. */
@@ -1480,6 +1503,13 @@
       grid-auto-rows: min-content;
       gap: 1rem;
       padding: .25rem;
+      transition: opacity .25s ease; /* casa com DURACAO_FADE_MS */
+    }
+    /* Meio da troca de coordenador: a grade some, é remontada e volta —
+       mesmo fade da matriz da vista Apontamento. */
+    .pd-cards--trocando { opacity: 0; }
+    @media (prefers-reduced-motion: reduce) {
+      .pd-cards { transition: none; }
     }
     /* Centralizado na vertical só quando tudo cabe — a classe é ligada pelo
        apontamento.js, que já mede o transbordo para decidir a rolagem.
@@ -2640,7 +2670,12 @@
   <section id="vista-pendencias" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
       <div>
-        <h1 class="text-3xl font-extrabold tracking-wide uppercase">Pendências de Apontamento</h1>
+        <div class="flex items-center gap-3">
+          <h1 class="text-3xl font-extrabold tracking-wide uppercase">Pendências de Apontamento</h1>
+          <!-- Coordenador no ar; a tela alterna entre eles, como a Apontamento -->
+          <span id="pd-coordenador" class="ap-coordenador"></span>
+          <span id="pd-indicador" class="ap-indicador"></span>
+        </div>
         <div id="pd-subtitulo" class="painel__subtitulo"></div>
       </div>
       <div class="ap-placar">
