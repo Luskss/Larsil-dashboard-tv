@@ -11,6 +11,12 @@ import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras vistas
 
+// O card "LARSIL" (bens sem coordenador, ver server.js SEM_COORDENADOR) não é
+// uma pessoa — não tem foto pra buscar por nome, só a logo da empresa.
+function urlFotoOuLogo(nome) {
+  return nome === "LARSIL" ? "/img/branca.png" : `/api/foto/${encodeURIComponent(nome)}`;
+}
+
 // Mesma palette categórica dos tipos usada em frotas.js — cor fixa por
 // nome de tipo (não por posição), para o mesmo tipo aparecer sempre igual
 // em todos os cards, independente da ordem dentro de cada líder.
@@ -80,7 +86,11 @@ function desenharLideres(lideres, total) {
     assinaturaAtual = assinatura;
     alvo.innerHTML = lideres.map((l, i) => `
       <div class="lider-card anima-surgir" style="--ordem: ${i};">
-        <div class="lider-card__nome" title="${escapar(l.nome)}">${escapar(l.nome)}</div>
+        <div class="lider-card__cabecalho">
+          <img class="lider-card__foto" src="${urlFotoOuLogo(l.nome)}" alt=""
+               loading="lazy" onerror="this.remove()">
+          <div class="lider-card__nome" title="${escapar(l.nome)}">${escapar(l.nome)}</div>
+        </div>
         <div class="lider-card__status">
           ${STATUS.map((s) => `
             <div class="lider-status lider-status--${s.chave}">

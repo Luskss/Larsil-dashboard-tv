@@ -21,6 +21,7 @@
 //   GET  /api/apontamento        -> última produção apontada por equipe (dbo.ORGANOGRAMA x dbo.BOLETIM_DIARIO x dbo.FOLGAS)
 //   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/colaboradores      -> quadro por coordenador, com as classes (SQL Server, dbo.COLABORADORES)
+//   GET  /api/foto/:nome         -> foto do colaborador (proxy para o iam_larsil/PCP)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
 //   GET  /api/veiculos-reservas  -> reservas dos carros (dbo.VEICULOS_RESERVAS_TESTE x dbo.VEICULOS_TESTE)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
@@ -1535,6 +1536,32 @@ app.get("/api/colaboradores", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar colaboradores:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco de colaboradores" });
+  }
+});
+
+// ===== Foto de colaborador (proxy) =====
+// Não resolve a foto aqui: busca no serviço que já sabe fazer isso (PCP/
+// timbertrack-hq), que por sua vez resolve em ordem — Azure Blob
+// (dbo.FOTO_PERFIL), bytes legados, e por fim o Unico People.
+//
+// Repassa os BYTES (não um redirect): o CSP do dashboard só libera img-src
+// 'self' — um 302 para o domínio do PCP cairia bloqueado no navegador com a
+// imagem quebrada. Isso também mantém a resposta same-origin sem precisar
+// abrir o CSP para um domínio externo.
+app.get("/api/foto/:nome", async (req, res) => {
+  const base = (process.env.FOTO_BASE_URL || "").replace(/\/$/, "");
+  if (!base) {
+    return res.status(503).json({ erro: "FOTO_BASE_URL não configurado — preencha o .env" });
+  }
+  try {
+    const origem = await fetch(`${base}/api/foto/${encodeURIComponent(req.params.nome)}`);
+    if (!origem.ok) return res.status(origem.status).end();
+    res.set("Content-Type", origem.headers.get("content-type") || "image/jpeg");
+    res.set("Cache-Control", "private, max-age=3600");
+    res.send(Buffer.from(await origem.arrayBuffer()));
+  } catch (erro) {
+    console.error("Erro ao buscar a foto do colaborador:", erro.message);
+    res.status(502).end();
   }
 });
 

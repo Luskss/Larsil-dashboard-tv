@@ -500,6 +500,24 @@
         opacity .5s ease,
         border-color .5s ease;
     }
+    /* Cabeçalho do card: foto (quando existe) + nome lado a lado. A foto é
+       opcional de propósito — nem todo coordenador tem uma cadastrada, e o
+       próprio <img> some via onerror (ver frota-lideres.js), então o
+       cabeçalho não pode depender dela para o alinhamento. */
+    .lider-card__cabecalho {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .lider-card__foto {
+      width: clamp(2.6rem, 7cqw, 4rem);
+      height: clamp(2.6rem, 7cqw, 4rem);
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+      border: 2px solid var(--border);
+      background: var(--surface-2, var(--border));
+    }
     .lider-card__nome {
       font-size: clamp(1.35rem, 3.5cqw, 2.2rem);
       font-weight: 800;
@@ -1383,12 +1401,29 @@
       flex: 0 0 auto;
     }
     .ap-equipe__lider {
+      display: flex;
+      align-items: center;
+      gap: .3rem;
+      min-width: 0;
       font-size: .72rem;
       font-weight: 600;
       color: var(--text);
+    }
+    .ap-equipe__lider-nome {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    /* Tabela densa (muitas linhas na tela): a foto fica pequena, do tamanho
+       do texto. Some sozinha via onerror quando não há foto cadastrada. */
+    .ap-equipe__foto {
+      width: 1.5em;
+      height: 1.5em;
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+      border: 1px solid var(--border);
+      background: var(--border);
     }
     /* "via 700AC": o boletim existe, mas foi lançado sob outro código de
        equipe. Some quando os dois batem. */
@@ -1498,7 +1533,7 @@
          ocupar toda a linha e, na TV (viewport menor que o monitor, poucas
          colunas), cada card virava uma faixa larga com o texto perdido no
          meio. Agora o card tem teto e a sobra vai para as laterais. */
-      grid-template-columns: repeat(auto-fit, minmax(15rem, 18rem));
+      grid-template-columns: repeat(auto-fit, minmax(19rem, 23rem));
       justify-content: center;
       grid-auto-rows: min-content;
       gap: 1rem;
@@ -1542,7 +1577,7 @@
     .pd-card--parada { --pd-cor: var(--ap-parada); }
     .pd-card--neutro { --pd-cor: var(--text-dim); }
 
-    .pd-card__topo { display: flex; align-items: baseline; gap: .5rem; }
+    .pd-card__topo { display: flex; align-items: center; gap: .5rem; }
     .pd-card__codigo {
       font-size: .82rem;
       font-weight: 800;
@@ -1550,14 +1585,30 @@
       color: var(--ap-ouro);
     }
     .pd-card__lider {
-      font-size: .75rem;
+      font-size: 1.05rem;
       font-weight: 700;
       color: var(--text);
       flex: 1;
       min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .pd-card__lider-nome {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    /* Tamanho em em: acompanha o texto do líder sem outro clamp. Some sozinha
+       via onerror quando não há foto cadastrada (ver apontamento.js). */
+    .pd-card__foto {
+      width: 1.9em;
+      height: 1.9em;
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+      border: 1px solid var(--border);
+      background: var(--border);
     }
     .pd-card__selo {
       padding: .08rem .45rem;
@@ -2214,11 +2265,27 @@
       min-height: 0;
     }
     .reserva-condutor {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
       font-weight: 700;
       font-size: clamp(.95rem, 1.5vw, 1.2rem);
       line-height: 1.2;
     }
     .reserva-condutor--espera { color: var(--text-dim); }
+    /* Tamanho em em: acompanha o clamp() do texto acima sem precisar de outro
+       clamp só pra foto. Some sozinha via onerror quando não há foto
+       cadastrada (ver reservas-veiculos.js) — por isso não define largura
+       mínima no container, senão o "Sem condutor" ficaria com respiro à toa. */
+    .reserva-condutor__foto {
+      width: 1.8em;
+      height: 1.8em;
+      border-radius: 50%;
+      object-fit: cover;
+      flex: none;
+      border: 1px solid var(--border);
+      background: var(--border);
+    }
     .reserva-motivo {
       margin-top: .2rem;
       font-size: .8rem;

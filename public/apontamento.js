@@ -78,6 +78,13 @@ function primeiroEUltimo(nome) {
   return `${partes[0]} ${partes[partes.length - 1]}`;
 }
 
+// Foto do líder (proxy /api/foto/:nome — ver server.js). Some sozinha via
+// onerror quando não há foto cadastrada.
+function fotoLider(nomeCompleto, classe = "pd-card__foto") {
+  if (!nomeCompleto) return "";
+  return `<img class="${classe}" src="/api/foto/${encodeURIComponent(nomeCompleto)}" alt="" loading="lazy" onerror="this.remove()">`;
+}
+
 const dataBR = (iso) => {
   const [, mes, dia] = String(iso || "").split("-");
   return dia && mes ? `${dia}/${mes}` : "—";
@@ -189,7 +196,9 @@ function desenharLinha(equipe, dias, dataRef) {
       <td class="ap-linha__equipe">
         <div class="ap-equipe">
           <span class="ap-equipe__codigo">${escapar(equipe.equipe)}</span>
-          <span class="ap-equipe__lider" title="${escapar(equipe.lider)}">${escapar(primeiroEUltimo(equipe.lider))}</span>
+          <span class="ap-equipe__lider" title="${escapar(equipe.lider)}">
+            ${fotoLider(equipe.lider, "ap-equipe__foto")}<span class="ap-equipe__lider-nome">${escapar(primeiroEUltimo(equipe.lider))}</span>
+          </span>
           ${via}
         </div>
       </td>
@@ -445,15 +454,14 @@ function desenharPendencias() {
       <div>
         <div class="pd-card__topo">
           <span class="pd-card__codigo">${escapar(equipe.equipe)}</span>
-          <span class="pd-card__lider" title="${escapar(equipe.lider)}">${escapar(primeiroEUltimo(equipe.lider))}</span>
+          <span class="pd-card__lider" title="${escapar(equipe.lider)}">
+            ${fotoLider(equipe.lider)}<span class="pd-card__lider-nome">${escapar(primeiroEUltimo(equipe.lider))}</span>
+          </span>
           <span class="pd-card__selo">${escapar(
             motivo.selo || SELO[equipe.estado] || equipe.estado
           )}</span>
         </div>
-        <div class="pd-card__sub">
-          ${escapar(primeiroEUltimo(equipe.coordenador) || "sem coordenador")}
-          ${equipe.atividade ? ` · ${escapar(equipe.atividade.toLowerCase())}` : ""}
-        </div>
+        ${equipe.atividade ? `<div class="pd-card__sub">${escapar(equipe.atividade.toLowerCase())}</div>` : ""}
       </div>
 
       <div class="pd-card__conta">

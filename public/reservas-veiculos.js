@@ -110,13 +110,23 @@ function mostrarAviso(mensagem) {
   aviso.classList.toggle("reservas-aviso--visivel", Boolean(mensagem));
 }
 
+// Foto do condutor (proxy /api/foto/:nome — ver server.js). Some sozinha via
+// onerror quando não há foto cadastrada, então some antes de pedir: sem nome
+// não tem o que buscar.
+function fotoCondutor(nomeCompleto) {
+  if (!nomeCompleto) return "";
+  return `<img class="reserva-condutor__foto" src="/api/foto/${encodeURIComponent(nomeCompleto)}" alt="" loading="lazy" onerror="this.remove()">`;
+}
+
 // Corpo do card: o que interessa saber olhando de longe muda conforme o estado.
 function corpoDoCard(veiculo, dados) {
   const { atual, proxima } = veiculo;
 
   if (atual) {
     return `
-      <div class="reserva-condutor">${escapar(nomeCurto(atual.usuario) || "Sem condutor")}</div>
+      <div class="reserva-condutor">
+        ${fotoCondutor(atual.usuario)}${escapar(nomeCurto(atual.usuario) || "Sem condutor")}
+      </div>
       <div class="reserva-motivo" title="${escapar(atual.motivo)}">${escapar(atual.motivo || "Sem motivo informado")}</div>
       <div class="reserva-janela">
         <span>${escapar(atual.inicio)}</span>
@@ -127,7 +137,9 @@ function corpoDoCard(veiculo, dados) {
 
   if (proxima) {
     return `
-      <div class="reserva-condutor reserva-condutor--espera">${escapar(nomeCurto(proxima.usuario) || "Sem condutor")}</div>
+      <div class="reserva-condutor reserva-condutor--espera">
+        ${fotoCondutor(proxima.usuario)}${escapar(nomeCurto(proxima.usuario) || "Sem condutor")}
+      </div>
       <div class="reserva-motivo" title="${escapar(proxima.motivo)}">${escapar(proxima.motivo || "Sem motivo informado")}</div>
       <div class="reserva-espera">
         Sai ${escapar(rotuloData(proxima.data, dados.hoje).toLowerCase())} às <strong>${escapar(proxima.inicio)}</strong>

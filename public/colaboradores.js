@@ -10,6 +10,12 @@ import { escapar } from "./escape.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
 
+// O card "LARSIL" (quem não é de campo ou está sem coordenador, ver
+// server.js SEM_COORDENADOR) não é uma pessoa — só a logo da empresa.
+function urlFotoOuLogo(nome) {
+  return nome === "LARSIL" ? "/img/branca.png" : `/api/foto/${encodeURIComponent(nome)}`;
+}
+
 // A classe vem do banco como sigla de 3 letras. A sigla fica no card (é o que
 // o RH usa), mas sozinha não diz nada de longe, então vai acompanhada do nome
 // por extenso. Os nomes saíram das funções que caem em cada classe — LDF, por
@@ -67,7 +73,11 @@ function desenharCoordenadores(coordenadores) {
     alvo.innerHTML = coordenadores
       .map((coord, i) => `
         <div class="lider-card anima-surgir" style="--ordem: ${i};">
-          <div class="lider-card__nome" title="${escapar(coord.nome)}">${escapar(coord.nome)}</div>
+          <div class="lider-card__cabecalho">
+            <img class="lider-card__foto" src="${urlFotoOuLogo(coord.nome)}" alt=""
+                 loading="lazy" onerror="this.remove()">
+            <div class="lider-card__nome" title="${escapar(coord.nome)}">${escapar(coord.nome)}</div>
+          </div>
           <div class="colab-coord__total">
             <span data-total-coord>0</span> colaboradores
           </div>
