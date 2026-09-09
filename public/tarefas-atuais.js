@@ -217,6 +217,45 @@ function assinaturaDe(equipe) {
 
 let assinaturaAtual = null;
 
+// Largura mínima do card e do espaçamento entre colunas, em px — os mesmos
+// números do CSS (.tarefas-equipe: minmax(260px,...) e gap: 1.25rem). Se um
+// dia o CSS mudar esses valores, mude aqui também.
+const LARGURA_MIN_CARD = 260;
+const GAP_PX = 20;
+
+// Quantas colunas cabem na largura disponível, dado o mínimo do card.
+function colunasQueCabem(largura) {
+  return Math.max(1, Math.floor((largura + GAP_PX) / (LARGURA_MIN_CARD + GAP_PX)));
+}
+
+// grid-template-columns fixo (em vez do auto-fit puro do CSS) para não sobrar
+// uma última linha capenga: com 5 pessoas e espaço para 4 colunas, o auto-fit
+// punha 4 na primeira linha e deixava 1 pessoa sozinha numa segunda linha,
+// com o card dela do mesmo tamanho dos outros e o resto da linha vazio — o
+// "vão" que aparecia na TV. Testamos de N colunas (o que cabe) para baixo até
+// achar uma contagem que preencha a última linha por igual (ou pelo menos que
+// a sobra não seja isolada demais); no pior caso cai no auto-fit mesmo.
+function calcularColunas(qtdPessoas, larguraDisponivel) {
+  const maximo = colunasQueCabem(larguraDisponivel);
+  if (qtdPessoas <= maximo) return qtdPessoas; // todo mundo cabe em uma linha só
+
+  for (let colunas = maximo; colunas >= 1; colunas--) {
+    const linhas = Math.ceil(qtdPessoas / colunas);
+    const ultimaLinha = qtdPessoas - (linhas - 1) * colunas;
+    // Última linha com pelo menos metade das colunas preenchida: nem toda
+    // divisão fecha exata (equipe de 7 pessoas, por exemplo), então o critério
+    // é "não deixar uma linha visualmente pobre", não "só linhas completas".
+    if (ultimaLinha >= colunas / 2) return colunas;
+  }
+  return maximo;
+}
+
+function ajustarColunas(equipe) {
+  const alvo = document.querySelector("#tarefas-equipe");
+  const colunas = calcularColunas(equipe.length, alvo.clientWidth);
+  alvo.style.setProperty("--colunas", colunas);
+}
+
 function desenharEquipe(equipe) {
   const alvo = document.querySelector("#tarefas-equipe");
 
@@ -225,6 +264,8 @@ function desenharEquipe(equipe) {
     alvo.innerHTML = `<p style="color: var(--text-dim);">Nenhuma pessoa encontrada no setor.</p>`;
     return;
   }
+
+  ajustarColunas(equipe);
 
   // Mesma proteção do Helpdesk (ver desenharColunas lá): esta vista se
   // atualiza a cada 30s e refazer o innerHTML a cada volta destruiria e
@@ -261,6 +302,10 @@ function desenharResumo(totais) {
   ]);
 }
 
+// Última equipe desenhada — para o resize (troca de vista, TV redimensionada)
+// recalcular as colunas sem esperar a próxima consulta ao servidor.
+let equipeAtual = [];
+
 async function atualizar() {
   try {
     const resp = await fetch("/api/tarefas-atuais");
@@ -276,6 +321,7 @@ async function atualizar() {
 
     mostrarAviso("");
     desenharResumo(dados.totais || {});
+    equipeAtual = dados.equipe;
     desenharEquipe(dados.equipe);
   } catch (erro) {
     // O aviso na tela é curto (é uma TV); o motivo real vai para o console.
@@ -286,3 +332,12 @@ async function atualizar() {
 
 atualizar();
 setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+
+// A vista Tarefas Atuais só fica visível (offsetParent não-nulo) quando a
+// rotação chega nela — até lá, clientWidth mede 0 e --colunas sairia errado.
+// paginacao.js dispara "resize" toda vez que troca de vista (ver ativar() lá)
+// bem como o navegador dispara ao redimensionar a janela — os dois casos em
+// que a largura disponível muda sem uma nova consulta ao servidor.
+window.addEventListener("resize", () => {
+  if (equipeAtual.length) ajustarColunas(equipeAtual);
+});

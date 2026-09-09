@@ -15,7 +15,7 @@
     /* Escala global da interface: o layout foi desenhado para a TV. Se um dia
        precisar encolher tudo de uma vez (monitor pequeno), é só baixar este
        número em vez de mexer em cada rem/vw — 1 = 100%, 0.8 = 80%... */
-    :root { --escala: 1; }
+    :root { --escala: .85; }
     body { zoom: var(--escala); }
 
     /* ===== Margem de segurança da TV (overscan) =====
@@ -2145,7 +2145,14 @@
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      /* --colunas vem do JS (tarefas-atuais.js), que conhece o tamanho da
+         equipe: auto-fit sozinho decide as colunas só pela LARGURA da tela,
+         sem saber quantas pessoas existem, e com 5 pessoas encaixava 4 na
+         primeira linha e sobrava 1 solitária numa segunda linha quase vazia.
+         O JS calcula o nº de colunas que cobre a equipe inteira numa grade
+         só, e este valor é só o teto — minmax ainda impede colunas franzinas
+         numa equipe grande. */
+      grid-template-columns: repeat(var(--colunas, auto-fit), minmax(260px, 1fr));
       gap: 1.25rem;
       align-items: stretch;
     }
@@ -2193,6 +2200,12 @@
       overflow: hidden;
     }
     .pessoa__foto {
+      /* Precisa ser posicionado (não só "depois no HTML"): um elemento em
+         fluxo normal empilha ABAIXO de um irmão com position:absolute, não
+         acima — sem isto as iniciais, que são absolute, ganhavam da foto e
+         apareciam por cima dela mesmo depois de carregada. */
+      position: absolute;
+      inset: 0;
       width: 100%;
       height: 100%;
       /* A origem manda o retrato ORIGINAL, e eles não seguem padrão nenhum:
