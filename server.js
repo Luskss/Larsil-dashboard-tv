@@ -1241,31 +1241,28 @@ app.get("/api/apontamento", async (_req, res) => {
       req2.input("de", sql.Date, iso(de));
       req2.input("ate", sql.Date, iso(ate));
       const { recordset: celulas } = await req2.query(
-        `SELECT LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))        AS EQUIPE,
-                -- O nome só entra como chave de casamento quando o código do
-                -- boletim não é equipe de ninguém no ORGANOGRAMA — mesma regra
-                -- da consulta de "último apontamento" logo acima, senão o
-                -- boletim de uma equipe válida (ex.: 880AC) volta a "vazar"
-                -- para o card de outra equipe do mesmo líder (ex.: 801AC).
-                CASE WHEN EXISTS (
-                       SELECT 1 FROM dbo.ORGANOGRAMA o
-                        WHERE LTRIM(RTRIM(o.EQUIPE)) = LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))
-                     ) THEN ''
-                     ELSE LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))
-                END                                         AS LIDER,
-                CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)   AS DIA,
-                COUNT(*)                                   AS QTD
-           FROM dbo.BOLETIM_DIARIO b
-          WHERE b.[DATA_EXECUÇÃO] >= @de
-            AND b.[DATA_EXECUÇÃO] <  DATEADD(day, 1, @ate)
-          GROUP BY LTRIM(RTRIM(ISNULL(b.[LÍDER], ''))),
-                   CASE WHEN EXISTS (
-                          SELECT 1 FROM dbo.ORGANOGRAMA o
-                           WHERE LTRIM(RTRIM(o.EQUIPE)) = LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))
-                        ) THEN ''
-                        ELSE LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))
-                   END,
-                   CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)`
+        // O nome só entra como chave de casamento quando o código do boletim
+        // não é equipe de ninguém no ORGANOGRAMA — mesma regra da consulta de
+        // "último apontamento" logo acima, senão o boletim de uma equipe
+        // válida (ex.: 880AC) volta a "vazar" para o card de outra equipe do
+        // mesmo líder (ex.: 801AC). O CASE/EXISTS vai numa CTE porque o SQL
+        // Server não aceita subquery na lista do GROUP BY.
+        `WITH bol AS (
+           SELECT LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))       AS EQUIPE,
+                  CASE WHEN EXISTS (
+                         SELECT 1 FROM dbo.ORGANOGRAMA o
+                          WHERE LTRIM(RTRIM(o.EQUIPE)) = LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))
+                       ) THEN ''
+                       ELSE LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))
+                  END                                        AS LIDER,
+                  CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)   AS DIA
+             FROM dbo.BOLETIM_DIARIO b
+            WHERE b.[DATA_EXECUÇÃO] >= @de
+              AND b.[DATA_EXECUÇÃO] <  DATEADD(day, 1, @ate)
+         )
+         SELECT EQUIPE, LIDER, DIA, COUNT(*) AS QTD
+           FROM bol
+          GROUP BY EQUIPE, LIDER, DIA`
       );
 
       // Folgas da janela: sem elas, férias e atestado viram "equipe parada".
