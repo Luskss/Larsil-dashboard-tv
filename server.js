@@ -23,6 +23,7 @@
 //   GET  /api/colaboradores      -> quadro por coordenador, com as classes (SQL Server, dbo.COLABORADORES)
 //   GET  /api/foto/:nome         -> foto do colaborador (proxy para o iam_larsil/PCP)
 //   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
+//   GET  /api/tarefas-atuais     -> em que cada pessoa da equipe está trabalhando (schema gestor)
 //   GET  /api/veiculos-reservas  -> reservas dos carros (dbo.VEICULOS_RESERVAS_TESTE x dbo.VEICULOS_TESTE)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 
@@ -1214,8 +1215,21 @@ app.get("/api/apontamento", async (_req, res) => {
                    b.[PRODUÇÃO]                              AS PRODUCAO,
                    LTRIM(RTRIM(ISNULL(b.STATUS, '')))        AS STATUS
               FROM dbo.BOLETIM_DIARIO b
-             WHERE (LTRIM(RTRIM(ISNULL(b.[LÍDER], ''))) = e.EQUIPE
-                 OR LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, ''))) = e.LIDER)
+             WHERE (
+                     LTRIM(RTRIM(ISNULL(b.[LÍDER], ''))) = e.EQUIPE
+                     -- O OR por nome só vale quando o código lançado no boletim
+                     -- não é equipe de ninguém no ORGANOGRAMA (o caso 700AC da
+                     -- armadilha 1). Se o código existe como outra equipe válida
+                     -- do mesmo líder (ex.: José Ajala em 801AC e 880AC), o nome
+                     -- não pode "vazar" o apontamento de uma para a outra.
+                     OR (
+                       LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, ''))) = e.LIDER
+                       AND NOT EXISTS (
+                         SELECT 1 FROM equipes e2
+                          WHERE e2.EQUIPE = LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))
+                       )
+                     )
+                   )
                AND b.[DATA_EXECUÇÃO] < DATEADD(day, 1, @ate)
              ORDER BY b.[DATA_EXECUÇÃO] DESC, b.ID DESC
           ) u`
@@ -1228,14 +1242,29 @@ app.get("/api/apontamento", async (_req, res) => {
       req2.input("ate", sql.Date, iso(ate));
       const { recordset: celulas } = await req2.query(
         `SELECT LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))        AS EQUIPE,
-                LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))  AS LIDER,
+                -- O nome só entra como chave de casamento quando o código do
+                -- boletim não é equipe de ninguém no ORGANOGRAMA — mesma regra
+                -- da consulta de "último apontamento" logo acima, senão o
+                -- boletim de uma equipe válida (ex.: 880AC) volta a "vazar"
+                -- para o card de outra equipe do mesmo líder (ex.: 801AC).
+                CASE WHEN EXISTS (
+                       SELECT 1 FROM dbo.ORGANOGRAMA o
+                        WHERE LTRIM(RTRIM(o.EQUIPE)) = LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))
+                     ) THEN ''
+                     ELSE LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))
+                END                                         AS LIDER,
                 CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)   AS DIA,
                 COUNT(*)                                   AS QTD
            FROM dbo.BOLETIM_DIARIO b
           WHERE b.[DATA_EXECUÇÃO] >= @de
             AND b.[DATA_EXECUÇÃO] <  DATEADD(day, 1, @ate)
           GROUP BY LTRIM(RTRIM(ISNULL(b.[LÍDER], ''))),
-                   LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, ''))),
+                   CASE WHEN EXISTS (
+                          SELECT 1 FROM dbo.ORGANOGRAMA o
+                           WHERE LTRIM(RTRIM(o.EQUIPE)) = LTRIM(RTRIM(ISNULL(b.[LÍDER], '')))
+                        ) THEN ''
+                        ELSE LTRIM(RTRIM(ISNULL(b.NOME_DO_LIDER, '')))
+                   END,
                    CONVERT(char(10), b.[DATA_EXECUÇÃO], 23)`
       );
 
@@ -1548,19 +1577,66 @@ app.get("/api/colaboradores", async (_req, res) => {
 // 'self' — um 302 para o domínio do PCP cairia bloqueado no navegador com a
 // imagem quebrada. Isso também mantém a resposta same-origin sem precisar
 // abrir o CSP para um domínio externo.
+// A origem manda o arquivo ORIGINAL, do tamanho em que foi tirado — os
+// retratos da equipe vão de 84 KB a 4,4 MB cada, e ela ignora qualquer
+// parâmetro de redimensionamento (?w=, ?size=... devolvem os mesmos bytes).
+// O painel mostra isso em círculos de ~100px, então o navegador da TV baixa
+// e decodifica megabytes para jogar quase tudo fora.
+//
+// Sem cache aqui, cada TV refazia a busca inteira em toda carga de página:
+// a vista Tarefas Atuais sozinha são cinco fotos (~7 MB) por TV, e as outras
+// vistas com foto (Frota por Líder, Colaboradores, Apontamento, Reservas)
+// pedem as suas por cima. Guardar os bytes deixa a origem ser consultada uma
+// vez por pessoa e serve o resto da memória.
+//
+// Redimensionar aqui seria melhor ainda, mas exigiria uma dependência nativa
+// (sharp) num projeto que hoje não tem nenhuma — o cache resolve o custo de
+// REDE, que é o que trava um Fire Stick, sem esse peso.
+const FOTO_CACHE_MS = 6 * 60 * 60 * 1000; // rosto de colaborador não muda no dia
+const FOTO_CACHE_MAX = 200;               // ~200 fotos: teto de memória do processo
+const cacheFotos = new Map(); // nome -> { tipo, bytes, em }
+
 app.get("/api/foto/:nome", async (req, res) => {
   const base = (process.env.FOTO_BASE_URL || "").replace(/\/$/, "");
   if (!base) {
     return res.status(503).json({ erro: "FOTO_BASE_URL não configurado — preencha o .env" });
   }
+
+  const nome = req.params.nome;
+  const salvo = cacheFotos.get(nome);
+  if (salvo && Date.now() - salvo.em < FOTO_CACHE_MS) {
+    res.set("Content-Type", salvo.tipo);
+    res.set("Cache-Control", "private, max-age=21600");
+    return res.send(salvo.bytes);
+  }
+
   try {
-    const origem = await fetch(`${base}/api/foto/${encodeURIComponent(req.params.nome)}`);
+    const origem = await fetch(`${base}/api/foto/${encodeURIComponent(nome)}`);
     if (!origem.ok) return res.status(origem.status).end();
-    res.set("Content-Type", origem.headers.get("content-type") || "image/jpeg");
-    res.set("Cache-Control", "private, max-age=3600");
-    res.send(Buffer.from(await origem.arrayBuffer()));
+    const tipo = origem.headers.get("content-type") || "image/jpeg";
+    const bytes = Buffer.from(await origem.arrayBuffer());
+
+    // Descarta a entrada mais antiga quando o mapa enche. Map itera na ordem
+    // de inserção, então a primeira chave é a mais velha — cache de rosto não
+    // precisa de LRU de verdade: o conjunto é pequeno e estável.
+    if (cacheFotos.size >= FOTO_CACHE_MAX) {
+      cacheFotos.delete(cacheFotos.keys().next().value);
+    }
+    cacheFotos.set(nome, { tipo, bytes, em: Date.now() });
+
+    res.set("Content-Type", tipo);
+    // 6h no navegador também: a TV fica ligada o dia inteiro e não deveria
+    // repedir a mesma foto a cada troca de vista.
+    res.set("Cache-Control", "private, max-age=21600");
+    res.send(bytes);
   } catch (erro) {
     console.error("Erro ao buscar a foto do colaborador:", erro.message);
+    // Foto vencida ainda serve: melhor um rosto de ontem do que um buraco no
+    // card porque a origem piscou.
+    if (salvo) {
+      res.set("Content-Type", salvo.tipo);
+      return res.send(salvo.bytes);
+    }
     res.status(502).end();
   }
 });
@@ -1662,6 +1738,199 @@ app.get("/api/helpdesk-chamados", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar os chamados do helpdesk:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco do helpdesk" });
+  }
+});
+
+// ===== Tarefas Atuais (schema gestor) =====
+// Em que cada pessoa da equipe está trabalhando AGORA. Os dados vêm do Gestor
+// de Tarefas, que mora no mesmo banco em outro schema:
+//
+//   gestor.perfis           -> as pessoas (pessoa_id, nome, setor, papel)
+//   gestor.tarefas          -> as tarefas (situacao: pendente/andamento/concluida)
+//   gestor.presenca         -> último "visto em" de cada pessoa (bolinha online)
+//   gestor.sessoes_de_tempo -> cronômetro por tarefa, de onde sai o tempo do dia
+//
+// A tela é uma coluna por pessoa, então a resposta já vem agrupada assim: quem
+// está online na frente, e dentro de cada um as tarefas em andamento antes das
+// pendentes (é a ordem em que a pessoa realmente está trabalhando nelas).
+//
+// Só o setor de TI por padrão — é o painel da TI. TAREFAS_SETOR muda isso, e
+// TAREFAS_SETOR=* mostra a empresa inteira.
+const TAREFAS_SETOR = (process.env.TAREFAS_SETOR || "ti").trim().toLowerCase();
+
+// Depois de quanto tempo sem dar sinal a pessoa deixa de contar como online.
+// O Gestor atualiza a presença de poucos em poucos segundos; um minuto absorve
+// um blip de rede sem deixar alguém "online" a tarde inteira depois de sair.
+const PRESENCA_ONLINE_SEGUNDOS = 60;
+
+// Quantas tarefas cabem na coluna de uma pessoa. Numa TV ninguém rola a tela:
+// o que passar disso vira o contador "+N" no rodapé do card.
+const TAREFAS_POR_PESSOA = 6;
+
+// Situações que interessam ao painel, na ordem em que a tela as mostra. As
+// concluídas ficam de fora dos cards (viram só o contador do dia, abaixo).
+const SITUACOES_ABERTAS = ["andamento", "pendente"];
+
+app.get("/api/tarefas-atuais", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    // Cache curto como o do helpdesk: é a vista mais "ao vivo" do painel — a
+    // bolinha de presença e o cronômetro perdem a graça com 2 min de atraso.
+    const dados = await comCacheSql("tarefas-atuais", async () => {
+      const pool = await conectarSql();
+      const filtroSetor = TAREFAS_SETOR === "*"
+        ? "1 = 1"
+        : "LOWER(LTRIM(RTRIM(p.setor))) = @setor";
+
+      // As pessoas, com presença e o que já fecharam hoje. O "hoje" é o do
+      // relógio de Telêmaco Borba (ver agoraNoFuso): o Railway roda em UTC e
+      // o contador viraria três horas cedo demais se fosse pelo relógio do
+      // processo — às 21h de um dia o painel já estaria zerando o outro.
+      const pessoas = await pool.request()
+        .input("setor", sql.NVarChar, TAREFAS_SETOR)
+        .input("online", sql.Int, PRESENCA_ONLINE_SEGUNDOS)
+        .input("hoje", sql.Date, agoraNoFuso().data)
+        .query(
+          `SELECT p.pessoa_id AS pessoaId,
+                  p.nome, p.setor, p.papel,
+                  CASE WHEN pr.visto_em IS NOT NULL
+                        AND DATEDIFF(second, pr.visto_em, SYSDATETIMEOFFSET()) <= @online
+                       THEN 1 ELSE 0 END AS online,
+                  pr.visto_em AS vistoEm,
+                  (SELECT COUNT(*)
+                     FROM gestor.tarefas t
+                    WHERE t.responsavel_id = p.pessoa_id
+                      AND t.situacao = 'concluida'
+                      AND CAST(t.concluida_em AT TIME ZONE 'UTC'
+                               AT TIME ZONE 'E. South America Standard Time' AS date) = @hoje
+                  ) AS concluidasHoje,
+                  (SELECT ISNULL(SUM(s.segundos), 0)
+                     FROM gestor.sessoes_de_tempo s
+                    WHERE s.pessoa_id = p.pessoa_id
+                      AND CAST(s.iniciou_em AT TIME ZONE 'UTC'
+                               AT TIME ZONE 'E. South America Standard Time' AS date) = @hoje
+                  ) AS segundosHoje
+             FROM gestor.perfis p
+             LEFT JOIN gestor.presenca pr ON pr.pessoa_id = p.pessoa_id
+            WHERE ${filtroSetor}`
+        );
+
+      // As tarefas abertas de cada uma. ROW_NUMBER corta em TAREFAS_POR_PESSOA
+      // por pessoa (a contagem cheia vem da subconsulta `abertas`, para o "+N"
+      // do rodapé bater com a realidade e não com o que coube na tela).
+      const situacoesIn = SITUACOES_ABERTAS.map((s) => `'${s}'`).join(", ");
+      const tarefas = await pool.request()
+        .input("setor", sql.NVarChar, TAREFAS_SETOR)
+        .query(
+          `SELECT responsavelId, id, titulo, situacao, prioridade, prazo,
+                  minutosEstimados, projeto, segundosGastos
+             FROM (
+               SELECT t.responsavel_id AS responsavelId,
+                      CAST(t.id AS nvarchar(36)) AS id,
+                      t.titulo, t.situacao, t.prioridade, t.prazo,
+                      t.minutos_estimados AS minutosEstimados,
+                      pr.nome AS projeto,
+                      (SELECT ISNULL(SUM(s.segundos), 0)
+                         FROM gestor.sessoes_de_tempo s
+                        WHERE s.tarefa_id = t.id) AS segundosGastos,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY t.responsavel_id
+                        -- "andamento" antes de "pendente" (é o que a pessoa
+                        -- está fazendo agora), e dentro de cada grupo o prazo
+                        -- mais apertado primeiro.
+                        ORDER BY CASE t.situacao WHEN 'andamento' THEN 0 ELSE 1 END,
+                                 t.prazo ASC
+                      ) AS rn
+                 FROM gestor.tarefas t
+                 JOIN gestor.perfis p ON p.pessoa_id = t.responsavel_id
+                 LEFT JOIN gestor.projetos pr ON pr.id = t.projeto_id
+                WHERE t.situacao IN (${situacoesIn})
+                  AND t.arquivada_em IS NULL
+                  AND ${filtroSetor}
+             ) x
+            WHERE x.rn <= ${TAREFAS_POR_PESSOA}`
+        );
+
+      // Total de abertas por pessoa (sem o corte acima), para o "+N".
+      const totais = await pool.request()
+        .input("setor", sql.NVarChar, TAREFAS_SETOR)
+        .query(
+          `SELECT t.responsavel_id AS responsavelId, COUNT(*) AS qtd
+             FROM gestor.tarefas t
+             JOIN gestor.perfis p ON p.pessoa_id = t.responsavel_id
+            WHERE t.situacao IN (${situacoesIn})
+              AND t.arquivada_em IS NULL
+              AND ${filtroSetor}
+            GROUP BY t.responsavel_id`
+        );
+
+      const porPessoa = new Map();
+      for (const linha of tarefas.recordset) {
+        const lista = porPessoa.get(linha.responsavelId) || [];
+        lista.push({
+          id: linha.id,
+          titulo: linha.titulo,
+          situacao: linha.situacao,
+          prioridade: linha.prioridade,
+          prazo: linha.prazo,
+          minutosEstimados: linha.minutosEstimados,
+          projeto: linha.projeto,
+          segundosGastos: linha.segundosGastos,
+        });
+        porPessoa.set(linha.responsavelId, lista);
+      }
+
+      const abertasPorPessoa = new Map(
+        totais.recordset.map((l) => [l.responsavelId, l.qtd])
+      );
+
+      const equipe = pessoas.recordset.map((p) => {
+        const lista = porPessoa.get(p.pessoaId) || [];
+        return {
+          pessoaId: p.pessoaId,
+          nome: p.nome || "(sem nome)",
+          setor: p.setor,
+          papel: p.papel,
+          online: Boolean(p.online),
+          vistoEm: p.vistoEm,
+          concluidasHoje: p.concluidasHoje,
+          segundosHoje: p.segundosHoje,
+          abertas: abertasPorPessoa.get(p.pessoaId) || 0,
+          emAndamento: lista.filter((t) => t.situacao === "andamento").length,
+          tarefas: lista,
+        };
+      });
+
+      // Ordem dos cards na TV: quem está com tarefa em andamento primeiro
+      // (é a resposta à pergunta "quem está fazendo o quê agora"), depois
+      // quem está online, e por fim o resto — desempatando pelo nome para a
+      // ordem não dançar entre duas consultas com os mesmos números.
+      equipe.sort((a, b) =>
+        (b.emAndamento > 0) - (a.emAndamento > 0)
+        || b.online - a.online
+        || b.abertas - a.abertas
+        || a.nome.localeCompare(b.nome, "pt-BR")
+      );
+
+      return {
+        atualizadoEm: new Date().toISOString(),
+        totais: {
+          pessoas: equipe.length,
+          online: equipe.filter((p) => p.online).length,
+          emAndamento: equipe.reduce((s, p) => s + p.emAndamento, 0),
+          abertas: equipe.reduce((s, p) => s + p.abertas, 0),
+          concluidasHoje: equipe.reduce((s, p) => s + p.concluidasHoje, 0),
+        },
+        equipe,
+      };
+    }, 30 * 1000);
+    res.json(dados);
+  } catch (erro) {
+    console.error("Erro ao consultar as tarefas atuais:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar o banco de tarefas" });
   }
 });
 

@@ -2133,6 +2133,267 @@
       background: color-mix(in srgb, var(--critical) 18%, transparent);
     }
 
+    /* ===== Vista Tarefas Atuais =====
+       Uma coluna por pessoa da equipe, no mesmo espírito do kanban do
+       Helpdesk: cabeçalho fixo (foto, nome, presença) e as tarefas rolando
+       DENTRO da coluna — a página em si nunca rola.
+
+       As colunas são auto-fit em vez de um número fixo: a equipe muda de
+       tamanho (alguém entra, alguém sai do setor) e uma grade de N fixo
+       deixaria um vão enorme na TV no dia em que sobrasse uma pessoa. */
+    .tarefas-equipe {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+      align-items: stretch;
+    }
+    @media (max-width: 900px) { .tarefas-equipe { grid-template-columns: 1fr; } }
+
+    .tarefas-equipe > .painel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      /* A borda superior colorida marca, de longe, quem está tocando alguma
+         coisa agora: é a única informação que a TV precisa entregar em um
+         relance, antes de qualquer um chegar perto para ler os títulos. */
+      border-top: 3px solid var(--cor-pessoa, var(--border));
+      /* A foto é dimensionada em cqw (ver .pessoa__moldura): sem declarar o
+         container aqui, a unidade cairia para o viewport e a foto ficaria do
+         mesmo tamanho independentemente de a equipe ter 3 ou 8 colunas. */
+      container-type: inline-size;
+    }
+
+    /* Cabeçalho em coluna, com a foto grande e centralizada: numa TV a cara da
+       pessoa é o que identifica o card à distância — o nome escrito só é
+       legível de perto. Era uma fileira com foto de 40px, tamanho de avatar de
+       lista, que de longe virava um pontinho indistinguível. */
+    .pessoa__cabecalho {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: .5rem;
+      margin-bottom: .85rem;
+    }
+    /* A moldura existe para reservar o espaço da foto ANTES de ela chegar:
+       sem isto, cada imagem que carrega empurra o resto do card para baixo
+       (o layout shift clássico), e são cinco colunas carregando ao mesmo
+       tempo. Ela também segura o fundo enquanto a foto não vem, e fica no
+       lugar de quem não tem foto — o onerror remove só o <img>. */
+    .pessoa__moldura {
+      position: relative;
+      width: clamp(72px, 34cqw, 132px);
+      aspect-ratio: 1;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 3px solid var(--cor-pessoa, var(--border));
+      overflow: hidden;
+    }
+    .pessoa__foto {
+      width: 100%;
+      height: 100%;
+      /* A origem manda o retrato ORIGINAL, e eles não seguem padrão nenhum:
+         tem close de rosto, tem foto de corpo inteiro. object-fit recorta no
+         círculo em vez de espremer a pessoa.
+         O 30% (e não `top` nem `center`) é o compromisso entre os dois casos:
+         `top` colava no alto e, em quem tem margem acima da cabeça, o círculo
+         pegava o fundo com o rosto empurrado para baixo; `center` afunda o
+         rosto de quem foi fotografado de corpo inteiro. Um terço do alto é
+         onde a cabeça cai nos dois enquadramentos. */
+      object-fit: cover;
+      object-position: center 30%;
+      display: block;
+    }
+    /* Iniciais atrás da foto: aparecem sozinhas quando não há imagem (o
+       onerror remove o <img> e descobre esta camada), sem precisar de um
+       segundo caminho de renderização no JS. */
+    .pessoa__iniciais {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: clamp(1.1rem, 2.4cqw, 1.9rem);
+      letter-spacing: .02em;
+      color: var(--text-dim);
+      user-select: none;
+    }
+    .pessoa__identidade { min-width: 0; max-width: 100%; }
+    .pessoa__nome {
+      font-weight: 700;
+      font-size: 1rem;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pessoa__estado {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .35rem;
+      font-size: .72rem;
+      color: var(--text-dim);
+      margin-top: .15rem;
+    }
+    .pessoa__bolinha {
+      width: 8px; height: 8px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+      background: var(--cor-presenca, var(--text-dim));
+    }
+    /* Só quem está online pulsa. Offline é bolinha parada: um painel em que
+       tudo pisca não destaca nada. */
+    .pessoa__bolinha--online {
+      animation: pessoa-pulso 2.4s ease-out infinite;
+    }
+    @keyframes pessoa-pulso {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: .35; }
+    }
+
+    /* Faixa de números do dia (tarefas abertas, concluídas hoje, tempo). */
+    .pessoa__metricas {
+      display: flex;
+      gap: .5rem;
+      margin-bottom: .75rem;
+    }
+    .pessoa__metrica {
+      flex: 1;
+      text-align: center;
+      padding: .35rem .2rem;
+      border-radius: .5rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .pessoa__metrica-valor {
+      font-weight: 800;
+      font-size: 1.05rem;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .pessoa__metrica-rotulo {
+      font-size: .6rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--text-dim);
+      margin-top: .2rem;
+    }
+
+    .pessoa__tarefas {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto; /* a barra já vem tematizada do tema.css */
+    }
+    .pessoa__vazia {
+      color: var(--text-dim);
+      font-size: .85rem;
+      padding: .5rem 0;
+    }
+    .pessoa__mais {
+      margin-top: .6rem;
+      font-size: .72rem;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    /* Card de tarefa: mesmo padrão do card de chamado do Helpdesk. */
+    .tarefa {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--cor-situacao, var(--border));
+      border-radius: .6rem;
+      padding: .55rem .65rem;
+    }
+    .tarefa + .tarefa { margin-top: .55rem; }
+    /* A tarefa que está EM ANDAMENTO é a resposta da tela: ganha fundo e
+       borda na cor de destaque para saltar do resto da coluna. */
+    .tarefa--andamento {
+      background: color-mix(in srgb, var(--success) 10%, var(--surface-2));
+      border-color: color-mix(in srgb, var(--success) 30%, var(--border));
+      border-left-color: var(--success);
+    }
+    .tarefa__topo {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .4rem;
+      font-size: .62rem;
+      margin-bottom: .3rem;
+    }
+    .tarefa__situacao {
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--cor-situacao, var(--text-dim));
+    }
+    .tarefa__prioridade {
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      line-height: 1;
+      padding: .2rem .4rem;
+      border-radius: 999px;
+      color: var(--cor-prioridade, var(--text-dim));
+      background: color-mix(in srgb, var(--cor-prioridade, var(--text-dim)) 16%, transparent);
+      border: 1px solid color-mix(in srgb, var(--cor-prioridade, var(--text-dim)) 35%, transparent);
+    }
+    .tarefa__titulo {
+      font-weight: 600;
+      font-size: .82rem;
+      line-height: 1.3;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .tarefa__rodape {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .4rem;
+      margin-top: .35rem;
+      font-size: .68rem;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+    /* Prazo estourado é o único vermelho da coluna — se tudo fosse colorido,
+       um atraso real passaria despercebido no meio dos outros. */
+    .tarefa__prazo--atrasado { color: var(--critical); font-weight: 700; }
+    .tarefa__prazo--hoje { color: var(--alert); font-weight: 700; }
+
+    .tarefas-resumo {
+      display: flex;
+      gap: 1.25rem;
+      font-size: .85rem;
+      color: var(--text-dim);
+    }
+    .tarefas-resumo strong {
+      color: var(--text);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tarefas-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .tarefas-aviso--visivel { display: block; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .pessoa__bolinha--online { animation: none; }
+    }
+
     /* ===== Vista Reservas de Veículos =====
        Cabeçalho com três KPIs, e embaixo os cards dos carros à esquerda com o
        mural das próximas saídas à direita. Como as outras vistas, o que sobra
@@ -2819,6 +3080,19 @@
     <div id="colab-classes" class="lideres-lista colab-coordenadores mt-3"></div>
   </section>
 
+  <!-- ===== Vista Tarefas Atuais (em que cada um está trabalhando agora) ===== -->
+  <section id="vista-tarefas" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Tarefas Atuais</h1>
+      <div id="tarefas-resumo" class="tarefas-resumo"></div>
+    </div>
+
+    <div id="tarefas-aviso" class="tarefas-aviso" role="alert"></div>
+
+    <!-- Uma coluna por pessoa, preenchidas por tarefas-atuais.js -->
+    <div id="tarefas-equipe" class="tarefas-equipe mt-3"></div>
+  </section>
+
   <!-- ===== Vista Helpdesk (chamados por status) ===== -->
   <section id="vista-helpdesk" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
     <div class="flex items-center justify-between mb-3">
@@ -2902,6 +3176,7 @@
   <script src="./apontamento.js" type="module"></script>
   <script src="./ativos-ti.js" type="module"></script>
   <script src="./colaboradores.js" type="module"></script>
+  <script src="./tarefas-atuais.js" type="module"></script>
   <script src="./helpdesk-chamados.js" type="module"></script>
   <script src="./reservas-veiculos.js" type="module"></script>
   <script src="./railway-status.js" type="module"></script>
