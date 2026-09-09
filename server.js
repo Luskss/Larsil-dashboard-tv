@@ -1760,9 +1760,11 @@ const TAREFAS_SETOR = (process.env.TAREFAS_SETOR || "ti").trim().toLowerCase();
 // um blip de rede sem deixar alguém "online" a tarde inteira depois de sair.
 const PRESENCA_ONLINE_SEGUNDOS = 60;
 
-// Quantas tarefas cabem na coluna de uma pessoa. Numa TV ninguém rola a tela:
-// o que passar disso vira o contador "+N" no rodapé do card.
-const TAREFAS_POR_PESSOA = 6;
+// Quantas tarefas a lista de uma pessoa traz. A vista é um carrossel — cada
+// pessoa ocupa a tela inteira por alguns segundos — então cabe a lista quase
+// toda; o que passar disso vira o contador "+N" no rodapé (raro: quem tem 25
+// tarefas abertas é exceção, e a leitura da tela não muda por causa dela).
+const TAREFAS_POR_PESSOA = 20;
 
 // Situações que interessam ao painel, na ordem em que a tela as mostra. As
 // concluídas ficam de fora dos cards (viram só o contador do dia, abaixo).

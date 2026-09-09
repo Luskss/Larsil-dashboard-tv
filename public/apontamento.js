@@ -78,11 +78,26 @@ function primeiroEUltimo(nome) {
   return `${partes[0]} ${partes[partes.length - 1]}`;
 }
 
-// Foto do líder (proxy /api/foto/:nome — ver server.js). Some sozinha via
-// onerror quando não há foto cadastrada.
+// Iniciais para o círculo de quem não tem foto — as duas palavras de
+// primeiroEUltimo, para a letra bater com o nome escrito ao lado.
+function iniciais(nome) {
+  return primeiroEUltimo(nome)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((parte) => parte[0].toUpperCase())
+    .join("");
+}
+
+// Foto do líder (proxy /api/foto/:nome — ver server.js). As iniciais ficam
+// ATRÁS da <img>: cerca de 1 em cada 5 líderes não tem foto cadastrada no
+// Gestão, e o onerror remove só o <img>, descobrindo a camada de baixo — sem
+// ícone quebrado e sem buraco no card (mesmo padrão de tarefas-atuais.js).
 function fotoLider(nomeCompleto, classe = "pd-card__foto") {
   if (!nomeCompleto) return "";
-  return `<img class="${classe}" src="/api/foto/${encodeURIComponent(nomeCompleto)}" alt="" loading="lazy" onerror="this.remove()">`;
+  return `<span class="${classe}-moldura">` +
+    `<span class="${classe}-iniciais">${escapar(iniciais(nomeCompleto))}</span>` +
+    `<img class="${classe}" src="/api/foto/${encodeURIComponent(nomeCompleto)}" alt="" loading="lazy" onerror="this.remove()">` +
+    `</span>`;
 }
 
 const dataBR = (iso) => {

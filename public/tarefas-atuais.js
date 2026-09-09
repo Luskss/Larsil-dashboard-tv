@@ -1,13 +1,16 @@
-// Página Tarefas Atuais: uma coluna por pessoa da equipe, mostrando em que
-// cada um está trabalhando agora. Dados vêm de /api/tarefas-atuais, que lê o
-// schema `gestor` (o Gestor de Tarefas) — perfis, tarefas, presença e as
-// sessões de cronômetro.
+// Página Tarefas Atuais: um card por pessoa da equipe, em carrossel (uma por
+// vez, na tela inteira, igual à Frota por Coordenador), mostrando a lista
+// completa do que cada um está fazendo agora. Dados vêm de /api/tarefas-atuais,
+// que lê o schema `gestor` (o Gestor de Tarefas) — perfis, tarefas, presença e
+// as sessões de cronômetro.
 //
-// A leitura pretendida, de longe: a borda superior colorida e a bolinha de
-// presença dizem quem está tocando alguma coisa agora; chegando perto, os
-// cards em destaque dizem o quê.
+// Antes eram colunas lado a lado, e numa TV cada uma era estreita demais: os
+// títulos das tarefas cortavam e só cabiam uma ou duas por pessoa. Com o card
+// ocupando a tela, a cara da pessoa identifica quem é de longe e a lista à
+// direita cabe inteira; o holofote (holofote.js) passa de uma para a outra.
 
 import { aplicarNumeros } from "./animacoes.js";
+import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
 
 // Mesmo ritmo do Helpdesk (30s, contra 5 min das outras vistas): presença e
@@ -116,16 +119,21 @@ function mostrarAviso(mensagem) {
   aviso.classList.toggle("tarefas-aviso--visivel", Boolean(mensagem));
 }
 
-function desenharTarefa(tarefa, ordem) {
+function desenharTarefa(tarefa) {
   const situacao = String(tarefa.situacao || "").toLowerCase();
   const prioridade = String(tarefa.prioridade || "").toLowerCase();
   const prazo = descreverPrazo(tarefa.prazo);
   const gasto = tarefa.segundosGastos > 0 ? formatarDuracao(tarefa.segundosGastos) : "";
+  const estimado = tarefa.minutosEstimados > 0 ? formatarDuracao(tarefa.minutosEstimados * 60) : "";
 
-  return `<div class="tarefa anima-surgir${situacao === "andamento" ? " tarefa--andamento" : ""}"
-       style="--ordem: ${ordem}; --cor-situacao: ${COR_SITUACAO[situacao] || "var(--border)"};">
+  // Sem .anima-surgir: no carrossel os cards ficam empilhados e a cascata de
+  // entrada seguraria opacity:1 em todas as pessoas ao mesmo tempo (ver o
+  // mesmo motivo em holofote.js). A entrada de cada pessoa é a do card dela.
+  return `<div class="tarefa${situacao === "andamento" ? " tarefa--andamento" : ""}"
+       style="--cor-situacao: ${COR_SITUACAO[situacao] || "var(--border)"};">
     <div class="tarefa__topo">
       <span class="tarefa__situacao">${escapar(ROTULO_SITUACAO[situacao] || situacao)}</span>
+      ${tarefa.projeto ? `<span class="tarefa__projeto">${escapar(tarefa.projeto)}</span>` : ""}
       ${prioridade
         ? `<span class="tarefa__prioridade" style="--cor-prioridade: ${COR_PRIORIDADE[prioridade] || "var(--text-dim)"};">${escapar(prioridade)}</span>`
         : ""}
@@ -133,14 +141,18 @@ function desenharTarefa(tarefa, ordem) {
     <div class="tarefa__titulo">${escapar(tarefa.titulo || "(sem título)")}</div>
     <div class="tarefa__rodape">
       <span class="${prazo.classe}">${escapar(prazo.texto)}</span>
-      <span>${gasto ? `⏱ ${escapar(gasto)}` : ""}</span>
+      <span>${gasto ? `⏱ ${escapar(gasto)}${estimado ? ` / ${escapar(estimado)}` : ""}` : ""}</span>
     </div>
   </div>`;
 }
 
-function desenharPessoa(pessoa, ordem) {
-  // A cor da coluna segue o mesmo critério da ordenação da API: verde para
-  // quem está com tarefa em andamento, cinza para o resto.
+// Um card por pessoa, ocupando a tela inteira — o holofote (iniciarHolofote,
+// modo carrossel) passa de uma para a outra a cada poucos segundos, como na
+// Frota por Coordenador. A tela cheia é o que permite a LISTA COMPLETA de
+// tarefas: na grade antiga cabiam uma ou duas antes de cortar.
+function desenharPessoa(pessoa) {
+  // Verde para quem está com tarefa em andamento, cinza para o resto — mesmo
+  // critério da ordenação da API.
   const cor = pessoa.emAndamento > 0 ? "var(--success)" : "var(--border)";
   const corPresenca = pessoa.online ? "var(--success)" : "var(--text-dim)";
 
@@ -151,15 +163,11 @@ function desenharPessoa(pessoa, ordem) {
   const cabem = pessoa.tarefas.length;
   const restantes = Math.max(0, pessoa.abertas - cabem);
 
-  return `<div class="painel anima-surgir" style="--ordem: ${ordem}; --cor-pessoa: ${cor};">
-    <div class="pessoa__cabecalho">
+  return `<div class="pessoa-card" style="--cor-pessoa: ${cor};">
+    <div class="pessoa-card__perfil">
       <!-- A foto vem do mesmo proxy das outras vistas (/api/foto). As iniciais
            ficam ATRÁS dela: quem não tem foto cadastrada cai nelas sozinho,
-           porque o onerror remove só o <img> e descobre a camada de baixo —
-           sem ícone quebrado e sem um segundo caminho de render aqui.
-           Sem loading=lazy de propósito: as cinco colunas estão todas na
-           tela ao mesmo tempo, e o lazy só adiaria a foto para depois do
-           primeiro quadro, fazendo os rostos aparecerem em cascata. -->
+           porque o onerror remove só o <img> e descobre a camada de baixo. -->
       <div class="pessoa__moldura" style="--cor-pessoa: ${corPresenca};">
         <span class="pessoa__iniciais">${escapar(iniciais(pessoa.nome))}</span>
         <img class="pessoa__foto" src="/api/foto/${encodeURIComponent(pessoa.nome)}"
@@ -174,87 +182,50 @@ function desenharPessoa(pessoa, ordem) {
           <span>${escapar(estado)}</span>
         </div>
       </div>
+
+      <div class="pessoa__metricas">
+        <div class="pessoa__metrica">
+          <div class="pessoa__metrica-valor" data-metrica>0</div>
+          <div class="pessoa__metrica-rotulo">Abertas</div>
+        </div>
+        <div class="pessoa__metrica">
+          <div class="pessoa__metrica-valor" data-metrica>0</div>
+          <div class="pessoa__metrica-rotulo">Feitas hoje</div>
+        </div>
+        <div class="pessoa__metrica">
+          <!-- Tempo vai escrito direto: "1h43" não é número para aplicarNumeros. -->
+          <div class="pessoa__metrica-valor">${escapar(formatarDuracao(pessoa.segundosHoje))}</div>
+          <div class="pessoa__metrica-rotulo">Hoje</div>
+        </div>
+      </div>
     </div>
 
-    <div class="pessoa__metricas">
-      <div class="pessoa__metrica">
-        <div class="pessoa__metrica-valor" data-metrica>0</div>
-        <div class="pessoa__metrica-rotulo">Abertas</div>
+    <div class="pessoa-card__lista">
+      <div class="pessoa-card__lista-titulo">No que está trabalhando</div>
+      <div class="pessoa__tarefas">
+        ${cabem
+          ? pessoa.tarefas.map((t) => desenharTarefa(t)).join("")
+          : `<div class="pessoa__vazia">Sem tarefas abertas</div>`}
+        ${restantes ? `<div class="pessoa__mais">+${restantes} não ${restantes === 1 ? "exibida" : "exibidas"}</div>` : ""}
       </div>
-      <div class="pessoa__metrica">
-        <div class="pessoa__metrica-valor" data-metrica>0</div>
-        <div class="pessoa__metrica-rotulo">Feitas hoje</div>
-      </div>
-      <div class="pessoa__metrica">
-        <!-- Tempo não é contador que sobe: aplicarNumeros conta de 0 até o
-             valor, e "1h43" não é número. Vai escrito direto. -->
-        <div class="pessoa__metrica-valor">${escapar(formatarDuracao(pessoa.segundosHoje))}</div>
-        <div class="pessoa__metrica-rotulo">Hoje</div>
-      </div>
-    </div>
-
-    <div class="pessoa__tarefas">
-      ${cabem
-        ? pessoa.tarefas.map((t, i) => desenharTarefa(t, i)).join("")
-        : `<div class="pessoa__vazia">Sem tarefas abertas</div>`}
-      ${restantes ? `<div class="pessoa__mais">+${restantes} não ${restantes === 1 ? "exibida" : "exibidas"}</div>` : ""}
     </div>
   </div>`;
 }
 
-// Assinatura do que está DESENHADO nas colunas. Os números das métricas ficam
+// Assinatura do que está DESENHADO nos cards. Os números das métricas ficam
 // de fora de propósito: eles se atualizam sozinhos por aplicarNumeros, sem
-// refazer o quadro.
+// refazer o quadro (e sem reiniciar o carrossel do holofote).
 function assinaturaDe(equipe) {
   return equipe
     .map((p) => [
       p.pessoaId, p.online, p.emAndamento, p.abertas,
       p.segundosHoje,
-      p.tarefas.map((t) => [t.id, t.situacao, t.prioridade, t.titulo, t.prazo, t.segundosGastos].join("~")).join("|"),
+      p.tarefas.map((t) => [t.id, t.situacao, t.prioridade, t.titulo, t.prazo, t.projeto, t.segundosGastos, t.minutosEstimados].join("~")).join("|"),
     ].join("·"))
     .join("§");
 }
 
 let assinaturaAtual = null;
-
-// Largura mínima do card e do espaçamento entre colunas, em px — os mesmos
-// números do CSS (.tarefas-equipe: minmax(260px,...) e gap: 1.25rem). Se um
-// dia o CSS mudar esses valores, mude aqui também.
-const LARGURA_MIN_CARD = 260;
-const GAP_PX = 20;
-
-// Quantas colunas cabem na largura disponível, dado o mínimo do card.
-function colunasQueCabem(largura) {
-  return Math.max(1, Math.floor((largura + GAP_PX) / (LARGURA_MIN_CARD + GAP_PX)));
-}
-
-// grid-template-columns fixo (em vez do auto-fit puro do CSS) para não sobrar
-// uma última linha capenga: com 5 pessoas e espaço para 4 colunas, o auto-fit
-// punha 4 na primeira linha e deixava 1 pessoa sozinha numa segunda linha,
-// com o card dela do mesmo tamanho dos outros e o resto da linha vazio — o
-// "vão" que aparecia na TV. Testamos de N colunas (o que cabe) para baixo até
-// achar uma contagem que preencha a última linha por igual (ou pelo menos que
-// a sobra não seja isolada demais); no pior caso cai no auto-fit mesmo.
-function calcularColunas(qtdPessoas, larguraDisponivel) {
-  const maximo = colunasQueCabem(larguraDisponivel);
-  if (qtdPessoas <= maximo) return qtdPessoas; // todo mundo cabe em uma linha só
-
-  for (let colunas = maximo; colunas >= 1; colunas--) {
-    const linhas = Math.ceil(qtdPessoas / colunas);
-    const ultimaLinha = qtdPessoas - (linhas - 1) * colunas;
-    // Última linha com pelo menos metade das colunas preenchida: nem toda
-    // divisão fecha exata (equipe de 7 pessoas, por exemplo), então o critério
-    // é "não deixar uma linha visualmente pobre", não "só linhas completas".
-    if (ultimaLinha >= colunas / 2) return colunas;
-  }
-  return maximo;
-}
-
-function ajustarColunas(equipe) {
-  const alvo = document.querySelector("#tarefas-equipe");
-  const colunas = calcularColunas(equipe.length, alvo.clientWidth);
-  alvo.style.setProperty("--colunas", colunas);
-}
 
 function desenharEquipe(equipe) {
   const alvo = document.querySelector("#tarefas-equipe");
@@ -265,20 +236,17 @@ function desenharEquipe(equipe) {
     return;
   }
 
-  ajustarColunas(equipe);
-
-  // Mesma proteção do Helpdesk (ver desenharColunas lá): esta vista se
-  // atualiza a cada 30s e refazer o innerHTML a cada volta destruiria e
-  // recriaria dezenas de cards — layout e repintura da vista inteira — além
-  // de reiniciar a cascata .anima-surgir, fazendo o quadro piscar de meio em
-  // meio minuto na cara de quem está olhando. Quase nada muda entre duas
-  // consultas: só remonta quando muda de verdade.
+  // Mesma proteção do Helpdesk e da Frota por Coordenador: esta vista se
+  // atualiza a cada 30s e refazer o innerHTML a cada volta recriaria todos os
+  // cards — layout e repintura da vista inteira — e jogaria o holofote de
+  // volta para a primeira pessoa. Quase nada muda entre duas consultas: só
+  // remonta quando a estrutura muda de verdade.
   const assinatura = assinaturaDe(equipe);
   const remontar = assinatura !== assinaturaAtual;
 
   if (remontar) {
     assinaturaAtual = assinatura;
-    alvo.innerHTML = equipe.map((p, i) => desenharPessoa(p, i)).join("");
+    alvo.innerHTML = equipe.map((p) => desenharPessoa(p)).join("");
   }
 
   // Duas métricas por pessoa, na mesma ordem em que foram geradas: abertas e
@@ -286,6 +254,12 @@ function desenharEquipe(equipe) {
   // `remontar` — senão o contador voltaria a zero a cada atualização.
   const metricas = equipe.flatMap((p) => [p.abertas, p.concluidasHoje]);
   aplicarNumeros(alvo, "[data-metrica]", metricas, remontar);
+
+  // Uma pessoa por vez, na tela inteira (modo carrossel do holofote — o mesmo
+  // da Frota por Coordenador e do Colaboradores). Só reinicia com cards novos:
+  // reiniciar com os mesmos faria o destaque saltar de volta para a primeira
+  // pessoa a cada atualização.
+  if (remontar) iniciarHolofote(alvo, { carrossel: true, item: ".pessoa-card" });
 }
 
 function desenharResumo(totais) {
@@ -302,10 +276,6 @@ function desenharResumo(totais) {
   ]);
 }
 
-// Última equipe desenhada — para o resize (troca de vista, TV redimensionada)
-// recalcular as colunas sem esperar a próxima consulta ao servidor.
-let equipeAtual = [];
-
 async function atualizar() {
   try {
     const resp = await fetch("/api/tarefas-atuais");
@@ -321,7 +291,6 @@ async function atualizar() {
 
     mostrarAviso("");
     desenharResumo(dados.totais || {});
-    equipeAtual = dados.equipe;
     desenharEquipe(dados.equipe);
   } catch (erro) {
     // O aviso na tela é curto (é uma TV); o motivo real vai para o console.
@@ -333,11 +302,6 @@ async function atualizar() {
 atualizar();
 setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
 
-// A vista Tarefas Atuais só fica visível (offsetParent não-nulo) quando a
-// rotação chega nela — até lá, clientWidth mede 0 e --colunas sairia errado.
-// paginacao.js dispara "resize" toda vez que troca de vista (ver ativar() lá)
-// bem como o navegador dispara ao redimensionar a janela — os dois casos em
-// que a largura disponível muda sem uma nova consulta ao servidor.
-window.addEventListener("resize", () => {
-  if (equipeAtual.length) ajustarColunas(equipeAtual);
-});
+// O carrossel (holofote.js) cuida sozinho de pausar quando a vista sai de cena
+// e retomar quando volta — não há mais cálculo de colunas dependente da
+// largura, então esta vista não precisa reagir a "resize".
