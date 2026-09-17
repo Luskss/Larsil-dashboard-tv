@@ -196,6 +196,30 @@
       border-color: var(--alert);
       background: color-mix(in srgb, var(--alert) 10%, var(--surface-2));
     }
+
+    .manutencao-cabecalho {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+    }
+    .btn-minimizar {
+      flex: 0 0 auto;
+      width: 2rem;
+      height: 2rem;
+      border-radius: .5rem;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      transition: transform .15s ease, background .15s ease;
+    }
+    .btn-minimizar:hover { background: var(--surface); }
+    /* O ícone só gira; o corpo some via [hidden], então não precisa animar altura
+       (a transição de height teria custo de layout e ainda ficaria brusca). */
+    #card-manutencao.card-cfg--minimizado .btn-minimizar span { transform: rotate(-90deg); display: inline-block; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -205,44 +229,51 @@
     </div>
 
     <div class="card-cfg rounded p-4 mb-6" id="card-manutencao">
-      <h2 class="font-bold mb-1">Manutenção</h2>
-      <p class="text-sm mb-4" style="color: var(--text-dim);">
-        Tira o dashboard do ar e mostra um aviso no lugar — o sistema inteiro ou só
-        algumas telas. As telas em manutenção saem da rotação da TV.
-        Vale para todas as telas; a TV acompanha em até 30 segundos, sem recarregar.
-      </p>
-
-      <label class="chave-manutencao">
-        <input type="checkbox" id="manutencao-global">
-        <span>
-          <strong>Sistema inteiro em manutenção</strong>
-          <span class="chave-manutencao__dica">Todas as telas mostram só o aviso e a rotação para.</span>
-        </span>
-      </label>
-
-      <div class="campos-manutencao">
-        <label class="campo-manutencao">
-          <span class="campo-manutencao__rotulo">Mensagem exibida</span>
-          <input type="text" id="manutencao-mensagem" maxlength="200" autocomplete="off"
-                 placeholder="Ex.: Atualização do servidor em andamento.">
-        </label>
-        <label class="campo-manutencao">
-          <span class="campo-manutencao__rotulo">Previsão de retorno (opcional)</span>
-          <input type="text" id="manutencao-retorno" maxlength="200" autocomplete="off"
-                 placeholder="Ex.: hoje às 18h">
-        </label>
+      <div class="manutencao-cabecalho">
+        <h2 class="font-bold mb-1">Manutenção</h2>
+        <button type="button" id="btn-minimizar-manutencao" class="btn-minimizar" title="Minimizar" aria-expanded="true">
+          <span aria-hidden="true">▾</span>
+        </button>
       </div>
+      <div id="manutencao-corpo">
+        <p class="text-sm mb-4" style="color: var(--text-dim);">
+          Tira o dashboard do ar e mostra um aviso no lugar — o sistema inteiro ou só
+          algumas telas. As telas em manutenção saem da rotação da TV.
+          Vale para todas as telas; a TV acompanha em até 30 segundos, sem recarregar.
+        </p>
 
-      <h3 class="font-bold mt-4 mb-1 text-sm">Telas individuais</h3>
-      <p class="text-sm mb-3" style="color: var(--text-dim);">
-        Marque as telas que devem ficar fora do ar. Com o sistema inteiro em manutenção,
-        essa escolha fica em segundo plano — o aviso cobre tudo.
-      </p>
-      <div id="lista-manutencao" class="lista-paginas"></div>
+        <label class="chave-manutencao">
+          <input type="checkbox" id="manutencao-global">
+          <span>
+            <strong>Sistema inteiro em manutenção</strong>
+            <span class="chave-manutencao__dica">Todas as telas mostram só o aviso e a rotação para.</span>
+          </span>
+        </label>
 
-      <div class="acoes-tokens">
-        <button type="button" id="btn-salvar-manutencao">Salvar</button>
-        <span id="manutencao-status" class="tokens-status"></span>
+        <div class="campos-manutencao">
+          <label class="campo-manutencao">
+            <span class="campo-manutencao__rotulo">Mensagem exibida</span>
+            <input type="text" id="manutencao-mensagem" maxlength="200" autocomplete="off"
+                   placeholder="Ex.: Atualização do servidor em andamento.">
+          </label>
+          <label class="campo-manutencao">
+            <span class="campo-manutencao__rotulo">Previsão de retorno (opcional)</span>
+            <input type="text" id="manutencao-retorno" maxlength="200" autocomplete="off"
+                   placeholder="Ex.: hoje às 18h">
+          </label>
+        </div>
+
+        <h3 class="font-bold mt-4 mb-1 text-sm">Telas individuais</h3>
+        <p class="text-sm mb-3" style="color: var(--text-dim);">
+          Marque as telas que devem ficar fora do ar. Com o sistema inteiro em manutenção,
+          essa escolha fica em segundo plano — o aviso cobre tudo.
+        </p>
+        <div id="lista-manutencao" class="lista-paginas"></div>
+
+        <div class="acoes-tokens">
+          <button type="button" id="btn-salvar-manutencao">Salvar</button>
+          <span id="manutencao-status" class="tokens-status"></span>
+        </div>
       </div>
     </div>
 

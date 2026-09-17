@@ -1237,11 +1237,11 @@
       /* O dourado e o verde-escuro são os do original, que já funcionam sobre
          fundo escuro. Os semáforos são as cores do original clareadas. */
       --ap-ouro:    #c9a84c;
-      --ap-ok:      #3fa34d;
-      --ap-atencao: #e0a63c;
-      --ap-critico: #d9534f;
-      --ap-evento:  #2f7fbf;   /* folga registrada: azul, não é cobrança */
-      --ap-parada:  #ef6c00;   /* SEM ATIVIDADE, o laranja do original      */
+      --ap-ok:      #2e8b57;
+      --ap-atencao: #ef6c00;
+      --ap-critico: #a02334;
+      --ap-evento:  #5a6472;   /* folga registrada: cinza-escuro, como na legenda */
+      --ap-parada:  #ef6c00;   /* SEM ATIVIDADE, o laranja da legenda             */
       --ap-vazio:   rgba(238, 243, 234, .07);
       /* Opaca de propósito — é o fundo do cabeçalho fixo, que precisa tapar as
          linhas passando por baixo. Tom da família do gradiente do tema. */
@@ -1332,10 +1332,10 @@
       --ap-vazio: #eef1f4;
       --ap-cabecalho: #f2f4f7;  /* opaco: tapa as linhas rolando por baixo */
       --ap-ouro:    #8a6a12;
-      --ap-ok:      #2e7d32;
-      --ap-atencao: #b3760a;
-      --ap-critico: #c62828;
-      --ap-evento:  #1565c0;
+      --ap-ok:      #2e8b57;
+      --ap-atencao: #d35400;
+      --ap-critico: #a02334;
+      --ap-evento:  #4b5560;
       --ap-parada:  #d35400;
 
       flex: 1;
@@ -2880,8 +2880,15 @@
   </style>
 </head>
 <body class="min-h-screen">
-  <!-- ===== Vista Dashboard (relógio + clima + placeholders) ===== -->
-  <section id="vista-dashboard" class="vista vista--ativa w-full max-w-10xl mx-auto px-6 pt-6 pb-0">
+  <!-- ===== Vista Dashboard (relógio + clima + placeholders) =====
+       Cancela aqui a --escala aplicada no body (ver o comentário dela no
+       <head>): esta tela já foi calibrada no tamanho 100% e encolheu junto
+       quando a escala global baixou para .85 por causa de outra vista. O
+       zoom é escopado ao elemento — cancelar dentro de um ancestral com
+       zoom: .85 resulta em zoom efetivo 1 aqui dentro, sem mexer nas
+       outras vistas. -->
+  <section id="vista-dashboard" class="vista vista--ativa w-full max-w-10xl mx-auto px-6 pt-6 pb-0"
+    style="zoom: calc(1 / var(--escala));">
     <div class="flex items-center justify-end mb-3">
       <div class="flex items-center gap-3">
       </div>

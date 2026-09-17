@@ -45,9 +45,15 @@ const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 // CARRO NOVO NA FROTA: exporte o PNG com 400px de altura, ponha em
 // public/img/carros e acrescente a linha aqui com a largura que ele ficou. O
 // nome do arquivo tem que bater com o do disco letra por letra — o Railway roda
-// em Linux, onde maiúscula e minúscula são arquivos diferentes; por isso os
-// quatro estão todos em caixa baixa. Modelo sem arte simplesmente fica sem
-// figura, em vez de virar um quadrado de imagem quebrada.
+// em Linux, onde maiúscula e minúscula são arquivos diferentes; por isso todos
+// estão em caixa baixa. Modelo sem arte simplesmente fica sem figura, em vez
+// de virar um quadrado de imagem quebrada.
+//
+// strada.png e spin.png: largura ainda é um palpite (1025, igual à do
+// saveiro) — ajuste o número aqui quando exportar o PNG de verdade. Como o
+// object-fit: contain do CSS é quem manda no tamanho final na tela, um valor
+// impreciso só custa um leve ajuste no primeiro quadro (ver .veiculo-card__foto
+// no index.html), nunca uma imagem cortada ou distorcida.
 const ALTURA_ARTE = 400;
 
 const ARTES = [
@@ -55,6 +61,8 @@ const ARTES = [
   { chave: "HB20",    arquivo: "hb20",    largura: 1038 },
   { chave: "SAVEIRO", arquivo: "saveiro", largura: 1025 },
   { chave: "ETIOS",   arquivo: "etios",   largura: 896 },
+  { chave: "STRADA",  arquivo: "strada",  largura: 1025 },
+  { chave: "SPIN",    arquivo: "spin",    largura: 1025 },
 ];
 
 // O alt leva o modelo porque a figura é a ÚNICA identificação do carro no card
@@ -162,6 +170,22 @@ function assinaturaDe(dados) {
     .join("|");
 }
 
+// Colunas do grid: o mais quadrado possível, mas sem deixar buraco na última
+// linha. Partindo de ceil(sqrt(n)) — o quadrado mais próximo —, sobe uma
+// coluna por vez até achar uma divisão exata (ex.: 10 carros: sqrt dá 4,
+// que sobraria 4x3 com só 2 na última linha; sobe para 5, que fecha 5x2).
+// O teto de 6 evita cards estreitos demais numa frota muito grande — a
+// partir daí aceita a última linha incompleta.
+const TETO_COLUNAS = 6;
+
+function colunasPara(total) {
+  if (total <= 0) return 1;
+  for (let colunas = Math.ceil(Math.sqrt(total)); colunas < TETO_COLUNAS; colunas++) {
+    if (total % colunas === 0) return colunas;
+  }
+  return Math.min(TETO_COLUNAS, total);
+}
+
 let assinaturaAtual = null;
 
 function desenhar(dados) {
@@ -181,13 +205,7 @@ function desenhar(dados) {
   if (remontar) {
     assinaturaAtual = assinatura;
 
-    // Grade o mais quadrada possível: com auto-fit, uma frota de 4 carros
-    // enfileirava três em cima e um sozinho embaixo. O teto de 4 colunas evita
-    // que uma frota grande vire uma fileira de cards estreitos.
-    alvo.style.setProperty(
-      "--colunas",
-      String(Math.min(4, Math.max(1, Math.ceil(Math.sqrt(dados.veiculos.length)))))
-    );
+    alvo.style.setProperty("--colunas", String(colunasPara(dados.veiculos.length)));
 
     alvo.innerHTML = dados.veiculos.length
       ? dados.veiculos.map((v, i) => {

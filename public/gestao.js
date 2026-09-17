@@ -21,6 +21,8 @@ import { escapar } from "./escape.js";
 // (marcar três telas salvaria três estados intermediários, cada um visível na
 // TV por até 30s). O botão Salvar aplica tudo de uma vez.
 const cardManutencao = document.querySelector("#card-manutencao");
+const corpoManutencao = document.querySelector("#manutencao-corpo");
+const btnMinimizarManutencao = document.querySelector("#btn-minimizar-manutencao");
 const chaveGlobal = document.querySelector("#manutencao-global");
 const campoMensagem = document.querySelector("#manutencao-mensagem");
 const campoRetorno = document.querySelector("#manutencao-retorno");
@@ -43,6 +45,34 @@ function renderizarManutencao() {
     `;
   }).join("");
 }
+
+// Minimizado é só conveniência de exibição para quem já configurou e quer a
+// tela mais curta — guardado por navegador, não pelo servidor, e por isso não
+// afeta a TV nem quem abre a página em outro PC.
+const CHAVE_MINIMIZADO = "gestao.manutencao.minimizado";
+
+function aplicarMinimizado(minimizado) {
+  cardManutencao.classList.toggle("card-cfg--minimizado", minimizado);
+  corpoManutencao.hidden = minimizado;
+  btnMinimizarManutencao.setAttribute("aria-expanded", String(!minimizado));
+  btnMinimizarManutencao.title = minimizado ? "Expandir" : "Minimizar";
+}
+
+try {
+  aplicarMinimizado(localStorage.getItem(CHAVE_MINIMIZADO) === "1");
+} catch {
+  // Sem localStorage (janela privada, etc.): fica expandido, que é o padrão seguro.
+}
+
+btnMinimizarManutencao.addEventListener("click", () => {
+  const minimizado = !cardManutencao.classList.contains("card-cfg--minimizado");
+  aplicarMinimizado(minimizado);
+  try {
+    localStorage.setItem(CHAVE_MINIMIZADO, minimizado ? "1" : "0");
+  } catch {
+    // Preferência não persiste, mas o toggle desta sessão continua funcionando.
+  }
+});
 
 const btnSalvarManutencao = document.querySelector("#btn-salvar-manutencao");
 

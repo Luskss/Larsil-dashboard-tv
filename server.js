@@ -519,7 +519,7 @@ const LINHA_CEPEA =
 // dela é o pregão mais recente (data | valor | variação).
 const ESPELHO_URL = "https://www.noticiasagricolas.com.br/cotacoes/";
 const LINHA_ESPELHO =
-  /<table class="cot-fisicas">.*?<tbody>\s*<tr>\s*<td>\s*(\d{2}\/\d{2}\/\d{4})\s*<\/td>\s*<td>\s*([\d.,]+)\s*<\/td>/s;
+  /<table class="cot-fisicas">.*?<tbody[^>]*>\s*<tr>\s*<td>\s*(\d{2}\/\d{2}\/\d{4})\s*<\/td>\s*<td>\s*([\d.,]+)\s*<\/td>/s;
 
 // Cada produto: id do indicador no CEPEA (trocável pelo .env), caminho do
 // espelho e o rótulo do card. O nome vem daqui, e não do título da página do
