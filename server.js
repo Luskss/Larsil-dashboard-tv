@@ -7,6 +7,8 @@
 //   POST /api/config/:chave     -> salva config (body: { valor })
 //   GET  /api/paginas           -> ordem e visibilidade das páginas da rotação
 //   POST /api/paginas           -> salva ambas (body: { ordem, visiveis })
+//   GET  /api/manutencao        -> modo manutenção (global, mensagem, retorno, paginas)
+//   POST /api/manutencao        -> salva o modo manutenção
 //   GET  /api/clima?cidade=...   -> clima atual via Open-Meteo
 //   GET  /api/dolar              -> dólar (USD-BRL): AwesomeAPI, com PTAX do BC de reserva
 //   GET  /api/soja               -> indicador da soja (R$/saca) via CEPEA/ESALQ
@@ -301,6 +303,30 @@ app.post("/api/paginas", async (req, res) => {
     return res.status(400).json({ erro: "Envie 'ordem' e 'visiveis' como listas de nomes de página" });
   }
   await store.salvarPaginas({ ordem, visiveis });
+  res.json({ ok: true });
+});
+
+// ===== Modo manutenção =====
+// Tira o dashboard do ar (inteiro ou página a página) e mostra um aviso no
+// lugar. Mora no data.json junto com o resto: a TV lê na mesma sincronia de
+// 30s da rotação, então ligar a manutenção do PC apaga a tela dela sozinho.
+const MANUTENCAO_TEXTO_MAX = 200;
+
+app.get("/api/manutencao", async (_req, res) => {
+  res.json(await store.getManutencao());
+});
+
+app.post("/api/manutencao", async (req, res) => {
+  const paginas = listaDePaginas(req.body?.paginas);
+  if (!paginas) {
+    return res.status(400).json({ erro: "Envie 'paginas' como lista de nomes de página" });
+  }
+  await store.salvarManutencao({
+    global: req.body?.global === true,
+    mensagem: String(req.body?.mensagem ?? "").slice(0, MANUTENCAO_TEXTO_MAX),
+    retorno: String(req.body?.retorno ?? "").slice(0, MANUTENCAO_TEXTO_MAX),
+    paginas,
+  });
   res.json({ ok: true });
 });
 

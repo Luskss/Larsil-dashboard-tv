@@ -1,12 +1,114 @@
 // Lógica da tela de Gestão. Ficava inline em gestao.html, foi extraída para um
 // arquivo próprio para o CSP poder usar `script-src 'self'` (sem 'unsafe-inline').
 
-import { PAGINAS, carregarConfigPaginas, salvarConfigPaginas, ordenarPaginas } from "./paginacao.js";
+import {
+  PAGINAS,
+  carregarConfigPaginas,
+  salvarConfigPaginas,
+  ordenarPaginas,
+  carregarManutencao,
+  salvarManutencao,
+} from "./paginacao.js";
 import { getConfig, setConfig, listarRailwayTokens, salvarRailwayTokens } from "./downdetector.js";
 import { escapar } from "./escape.js";
 
 // Sem montarPaginacao(): esta página fica sempre fora da navegação/transição
 // (paginacao.js trata gestao.html como oculta por padrão).
+
+// ===== Manutenção =====
+// Diferente do resto da tela, aqui NÃO salvamos a cada clique: tirar o
+// dashboard do ar é destrutivo demais para acontecer no meio de uma marcação
+// (marcar três telas salvaria três estados intermediários, cada um visível na
+// TV por até 30s). O botão Salvar aplica tudo de uma vez.
+const cardManutencao = document.querySelector("#card-manutencao");
+const chaveGlobal = document.querySelector("#manutencao-global");
+const campoMensagem = document.querySelector("#manutencao-mensagem");
+const campoRetorno = document.querySelector("#manutencao-retorno");
+const listaManutencao = document.querySelector("#lista-manutencao");
+const statusManutencao = document.querySelector("#manutencao-status");
+let paginasEmManutencao = new Set();
+
+function renderizarManutencao() {
+  cardManutencao.classList.toggle("card-cfg--ativo", chaveGlobal.checked);
+  // Aqui a ordem é a do código (PAGINAS), e não a da rotação: esta lista é
+  // para achar uma tela pelo nome, não para configurar sequência.
+  listaManutencao.innerHTML = PAGINAS.map((p) => {
+    const fora = paginasEmManutencao.has(p.arquivo);
+    return `
+      <label class="item-pagina ${fora ? "item-pagina--fora" : ""}" data-arquivo="${escapar(p.arquivo)}">
+        <input type="checkbox" data-arquivo="${escapar(p.arquivo)}" ${fora ? "checked" : ""}>
+        <span class="item-pagina__rotulo">${escapar(p.rotulo)}</span>
+        <span class="item-pagina__arquivo ml-auto">${fora ? "fora do ar" : ""}</span>
+      </label>
+    `;
+  }).join("");
+}
+
+const btnSalvarManutencao = document.querySelector("#btn-salvar-manutencao");
+
+carregarManutencao().then((manutencao) => {
+  // Igual à lista de páginas: null é falha de carregamento, não "nada
+  // configurado". Mostrar tudo desligado aqui faria quem clicasse em Salvar
+  // religar o dashboard sem saber que ele estava em manutenção.
+  if (!manutencao) throw new Error("Não foi possível carregar a manutenção");
+  chaveGlobal.checked = manutencao.global;
+  campoMensagem.value = manutencao.mensagem;
+  campoRetorno.value = manutencao.retorno;
+  paginasEmManutencao = new Set(manutencao.paginas);
+  renderizarManutencao();
+}).catch(() => {
+  // Trava o Salvar: sem saber o estado atual, o formulário está mostrando
+  // tudo desligado — e salvar isso religaria um dashboard que talvez esteja
+  // em manutenção de propósito. Quem quiser mexer, recarrega a página.
+  btnSalvarManutencao.disabled = true;
+  chaveGlobal.disabled = true;
+  statusManutencao.textContent = "Erro ao carregar a manutenção — recarregue a página.";
+});
+
+chaveGlobal.addEventListener("change", () => {
+  cardManutencao.classList.toggle("card-cfg--ativo", chaveGlobal.checked);
+  statusManutencao.textContent = "Alterações não salvas.";
+});
+
+for (const campo of [campoMensagem, campoRetorno]) {
+  campo.addEventListener("input", () => {
+    statusManutencao.textContent = "Alterações não salvas.";
+  });
+}
+
+listaManutencao.addEventListener("change", (ev) => {
+  const alvo = ev.target;
+  if (!alvo.dataset.arquivo || alvo.type !== "checkbox") return;
+  if (alvo.checked) paginasEmManutencao.add(alvo.dataset.arquivo);
+  else paginasEmManutencao.delete(alvo.dataset.arquivo);
+  // Só a linha clicada muda de aparência, em vez de re-renderizar a lista:
+  // refazer o innerHTML aqui trocaria o checkbox que acabou de receber o
+  // clique por um novo, e quem estivesse navegando pelo teclado perderia o
+  // foco a cada marcação.
+  const linha = alvo.closest(".item-pagina");
+  linha.classList.toggle("item-pagina--fora", alvo.checked);
+  linha.querySelector(".item-pagina__arquivo").textContent = alvo.checked ? "fora do ar" : "";
+  statusManutencao.textContent = "Alterações não salvas.";
+});
+
+btnSalvarManutencao.addEventListener("click", async () => {
+  statusManutencao.textContent = "Salvando...";
+  try {
+    await salvarManutencao({
+      global: chaveGlobal.checked,
+      mensagem: campoMensagem.value.trim(),
+      retorno: campoRetorno.value.trim(),
+      paginas: [...paginasEmManutencao],
+    });
+    statusManutencao.textContent = chaveGlobal.checked
+      ? "Dashboard fora do ar — a TV acompanha em até 30s."
+      : paginasEmManutencao.size > 0
+        ? `${paginasEmManutencao.size} tela(s) fora do ar — a TV acompanha em até 30s.`
+        : "Dashboard no ar.";
+  } catch {
+    statusManutencao.textContent = "Erro ao salvar a manutenção.";
+  }
+});
 
 // ===== Cidade do clima =====
 const inputCidade = document.querySelector("#input-cidade");

@@ -118,10 +118,83 @@
       cursor: pointer;
     }
     .acoes-tokens button:hover { background: var(--surface); }
+    .acoes-tokens button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    .acoes-tokens button:disabled:hover { background: var(--surface-2); }
     .tokens-status {
       font-size: .85rem;
       color: var(--text-dim);
       min-height: 1.2em;
+    }
+
+    /* ===== Manutenção ===== */
+    /* A chave do sistema inteiro é a ação mais drástica da tela (apaga o
+       dashboard para todo mundo), então ganha destaque e, quando ligada,
+       pinta o card de amarelo — para ninguém sair daqui sem perceber que
+       deixou tudo fora do ar. */
+    .chave-manutencao {
+      display: flex;
+      align-items: flex-start;
+      gap: .75rem;
+      padding: .9rem 1rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .chave-manutencao input[type="checkbox"] {
+      width: 18px; height: 18px;
+      accent-color: var(--alert);
+      flex: 0 0 auto;
+      margin-top: .15rem;
+    }
+    .chave-manutencao strong { display: block; }
+    .chave-manutencao__dica {
+      display: block;
+      font-size: .8rem;
+      color: var(--text-dim);
+      margin-top: .15rem;
+    }
+    #card-manutencao.card-cfg--ativo {
+      border-color: var(--alert);
+      background: color-mix(in srgb, var(--alert) 7%, var(--surface));
+    }
+    #card-manutencao.card-cfg--ativo .chave-manutencao { border-color: var(--alert); }
+
+    .campos-manutencao {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem;
+      margin-top: .75rem;
+    }
+    .campo-manutencao {
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+      flex: 1 1 18rem;
+    }
+    .campo-manutencao__rotulo {
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--text-dim);
+    }
+    .campo-manutencao input {
+      padding: .6rem .9rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 1rem;
+    }
+
+    /* Na lista de telas individuais o acento é amarelo (fora do ar), para não
+       se confundir com o verde de "visível na navegação" logo abaixo. */
+    #lista-manutencao .item-pagina input[type="checkbox"] { accent-color: var(--alert); }
+    #lista-manutencao .item-pagina--fora {
+      border-color: var(--alert);
+      background: color-mix(in srgb, var(--alert) 10%, var(--surface-2));
     }
   </style>
 </head>
@@ -129,6 +202,48 @@
   <div class="max-w-[1600px] mx-auto p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-3xl font-extrabold tracking-wide uppercase">Gestão</h1>
+    </div>
+
+    <div class="card-cfg rounded p-4 mb-6" id="card-manutencao">
+      <h2 class="font-bold mb-1">Manutenção</h2>
+      <p class="text-sm mb-4" style="color: var(--text-dim);">
+        Tira o dashboard do ar e mostra um aviso no lugar — o sistema inteiro ou só
+        algumas telas. As telas em manutenção saem da rotação da TV.
+        Vale para todas as telas; a TV acompanha em até 30 segundos, sem recarregar.
+      </p>
+
+      <label class="chave-manutencao">
+        <input type="checkbox" id="manutencao-global">
+        <span>
+          <strong>Sistema inteiro em manutenção</strong>
+          <span class="chave-manutencao__dica">Todas as telas mostram só o aviso e a rotação para.</span>
+        </span>
+      </label>
+
+      <div class="campos-manutencao">
+        <label class="campo-manutencao">
+          <span class="campo-manutencao__rotulo">Mensagem exibida</span>
+          <input type="text" id="manutencao-mensagem" maxlength="200" autocomplete="off"
+                 placeholder="Ex.: Atualização do servidor em andamento.">
+        </label>
+        <label class="campo-manutencao">
+          <span class="campo-manutencao__rotulo">Previsão de retorno (opcional)</span>
+          <input type="text" id="manutencao-retorno" maxlength="200" autocomplete="off"
+                 placeholder="Ex.: hoje às 18h">
+        </label>
+      </div>
+
+      <h3 class="font-bold mt-4 mb-1 text-sm">Telas individuais</h3>
+      <p class="text-sm mb-3" style="color: var(--text-dim);">
+        Marque as telas que devem ficar fora do ar. Com o sistema inteiro em manutenção,
+        essa escolha fica em segundo plano — o aviso cobre tudo.
+      </p>
+      <div id="lista-manutencao" class="lista-paginas"></div>
+
+      <div class="acoes-tokens">
+        <button type="button" id="btn-salvar-manutencao">Salvar</button>
+        <span id="manutencao-status" class="tokens-status"></span>
+      </div>
     </div>
 
     <div class="card-cfg rounded p-4 mb-6">

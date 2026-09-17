@@ -14,6 +14,10 @@
 // Para adicionar uma vista nova, crie a <section> no index.html e inclua-a
 // aqui em PAGINAS.
 
+// A mensagem de manutenção é texto que alguém digitou na tela de Gestão e que
+// vira HTML aqui — passa por escapar() como todo o resto do projeto.
+import { escapar } from "./escape.js";
+
 // De quanto em quanto tempo a tela releva a configuração. A TV fica ligada o
 // dia inteiro; sem isto, uma mudança feita no PC só apareceria no próximo
 // reload dela — que pode não acontecer nunca.
@@ -55,6 +59,38 @@ export const PAGINAS = [
 // configurou ainda" — e é diferente de []: null mostra todas as páginas, []
 // mostra nenhuma (ver o comentário em store.js).
 const CONFIG_PADRAO = { ordem: [], visiveis: null };
+
+// Manutenção desligada. Vale quando o servidor não responde: uma TV sem rede
+// deve continuar mostrando os dados que já tem, e não um aviso de manutenção
+// que ninguém ligou.
+const MANUTENCAO_PADRAO = { global: false, mensagem: "", retorno: "", paginas: [] };
+
+export async function carregarManutencao() {
+  try {
+    const resp = await fetch("/api/manutencao");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const dados = await resp.json();
+    return {
+      global: dados.global === true,
+      mensagem: typeof dados.mensagem === "string" ? dados.mensagem : "",
+      retorno: typeof dados.retorno === "string" ? dados.retorno : "",
+      paginas: Array.isArray(dados.paginas) ? dados.paginas : [],
+    };
+  } catch (erro) {
+    // Mesma regra do carregarConfigPaginas: null = "não deu para saber".
+    console.error("Manutenção:", erro);
+    return null;
+  }
+}
+
+export async function salvarManutencao(manutencao) {
+  const resp = await fetch("/api/manutencao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(manutencao),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+}
 
 export async function carregarConfigPaginas() {
   try {
@@ -288,6 +324,80 @@ const CSS = `
     background: color-mix(in srgb, var(--bg) 72%, transparent);
     border-color: var(--border);
   }
+
+  /* ===== Aviso de manutenção =====
+     Cobre a tela inteira, inclusive a barra de bolinhas e o botão de sair
+     (z-index acima dos dois): com o dashboard fora do ar não há para onde
+     navegar, e deixar as bolinhas clicáveis por cima do aviso só levaria a
+     vistas com dado velho. O fundo é opaco, não translúcido — o que está
+     atrás é justamente o que não deve ser lido. */
+  .manutencao {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    padding: 2rem;
+    text-align: center;
+    background: var(--bg);
+    background-image: var(--bg-gradiente, none);
+    animation: manutencao-entrar .4s ease both;
+  }
+  @keyframes manutencao-entrar {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* O ícone respira devagar para a tela não parecer travada/congelada — numa
+     TV que fica horas no aviso, é o sinal de que o painel continua vivo.
+     transform puro, como o resto das animações daqui. */
+  .manutencao__icone {
+    font-size: clamp(3rem, 9vmin, 5.5rem);
+    line-height: 1;
+    animation: manutencao-pulsar 3.2s ease-in-out infinite;
+  }
+  @keyframes manutencao-pulsar {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
+
+  .manutencao__titulo {
+    font-size: clamp(1.75rem, 5vmin, 3.25rem);
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--alert);
+  }
+  .manutencao__mensagem {
+    font-size: clamp(1rem, 2.4vmin, 1.6rem);
+    max-width: 40ch;
+    color: var(--text);
+  }
+  .manutencao__retorno {
+    font-size: clamp(.9rem, 2vmin, 1.25rem);
+    color: var(--text-dim);
+  }
+  .manutencao__retorno strong { color: var(--text); }
+  /* Qual página está em manutenção, quando é caso a caso. */
+  .manutencao__pagina {
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: .35rem .9rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .manutencao,
+    .manutencao__icone { animation: none; }
+  }
 `;
 
 export async function montarPaginacao() {
@@ -310,9 +420,46 @@ export async function montarPaginacao() {
   let atual = null;
   let timer = null;
   let aplicada = null; // assinatura da configuração já em uso
+  let manutencao = MANUTENCAO_PADRAO;
+  let avisoManutencao = null;
+
+  // Desenha (ou remove) o aviso que cobre a tela.
+  // `pagina` só vem no caso individual, para o aviso dizer qual vista caiu.
+  function mostrarAviso(pagina = null) {
+    avisoManutencao?.remove();
+
+    const aviso = document.createElement("div");
+    aviso.className = "manutencao";
+    aviso.setAttribute("role", "status");
+    const partes = [
+      `<div class="manutencao__icone" aria-hidden="true">🛠️</div>`,
+      pagina ? `<div class="manutencao__pagina">${escapar(pagina.rotulo)}</div>` : "",
+      `<h1 class="manutencao__titulo">Em manutenção</h1>`,
+      manutencao.mensagem
+        ? `<p class="manutencao__mensagem">${escapar(manutencao.mensagem)}</p>`
+        : `<p class="manutencao__mensagem">Estamos trabalhando nisso. Já já voltamos.</p>`,
+      manutencao.retorno
+        ? `<p class="manutencao__retorno">Retorno previsto: <strong>${escapar(manutencao.retorno)}</strong></p>`
+        : "",
+    ];
+    aviso.innerHTML = partes.join("");
+    document.body.appendChild(aviso);
+    avisoManutencao = aviso;
+  }
+
+  function esconderAviso() {
+    avisoManutencao?.remove();
+    avisoManutencao = null;
+  }
 
   function ativar(pagina) {
     atual = pagina;
+
+    // Página tirada do ar individualmente: mostra o aviso no lugar dela. Ela
+    // já foi filtrada da rotação em aplicar(), então isto só acontece quando
+    // alguém abre a vista pela URL (a exceção do hash na abertura).
+    if (manutencao.paginas.includes(pagina.arquivo)) mostrarAviso(pagina);
+    else if (!manutencao.global) esconderAviso();
 
     // Só a vista nova anima (ver o bloco "Transição entre páginas" no CSS): a
     // anterior perde .vista--ativa e volta a display:none na mesma hora.
@@ -358,8 +505,30 @@ export async function montarPaginacao() {
 
   // (Re)monta a barra para a configuração recebida. Roda na abertura e de novo
   // toda vez que a configuração muda no servidor.
-  function aplicar(config, inicial = false) {
-    aplicada = JSON.stringify(config);
+  function aplicar(config, novaManutencao, inicial = false) {
+    manutencao = novaManutencao;
+    aplicada = JSON.stringify({ config, manutencao });
+
+    // Manutenção geral: nada de barra, nada de rotação, só o aviso. Sai antes
+    // de montar o nav para as bolinhas nem existirem — o dashboard está fora
+    // do ar, não há para onde navegar.
+    if (manutencao.global) {
+      clearTimeout(timer);
+      barra.style.transition = "none";
+      barra.style.transform = "scaleX(0)";
+      nav?.remove();
+      nav = null;
+      bolinhas = [];
+      // `atual` fica como está: se a manutenção for desligada na próxima
+      // sincronia, a TV volta para a vista em que estava.
+      mostrarAviso();
+      return;
+    }
+
+    // Saiu da manutenção geral: tira o aviso já, sem esperar o ativar() lá
+    // embaixo — se a vista que voltar estiver em manutenção individual, ele
+    // desenha o aviso dela por cima de qualquer forma.
+    esconderAviso();
 
     const ordenadas = ordenarPaginas(config.ordem).filter((p) => existentes.includes(p));
     const porHash = ordenadas.find((p) => p.hash === location.hash);
@@ -372,7 +541,15 @@ export async function montarPaginacao() {
     paginas = config.visiveis
       ? ordenadas.filter((p) => config.visiveis.includes(p.arquivo) || p === excecao)
       : ordenadas;
-    if (paginas.length === 0) paginas = [ordenadas[0]];
+    // Páginas em manutenção saem da rotação, mesmo sendo a exceção do hash:
+    // aqui a intenção é justamente tirá-la do ar, e quem abriu o link recebe o
+    // aviso em ativar() em vez da vista.
+    const emManutencao = paginas.filter((p) => manutencao.paginas.includes(p.arquivo));
+    paginas = paginas.filter((p) => !manutencao.paginas.includes(p.arquivo));
+    // Tudo em manutenção: a única vista que sobra é uma das que caíram, e
+    // ativar() cobre a tela com o aviso dela. Melhor do que uma tela vazia sem
+    // explicação nenhuma.
+    if (paginas.length === 0) paginas = emManutencao.length ? [emManutencao[0]] : [ordenadas[0]];
 
     if (nav) nav.remove();
     nav = document.createElement("nav");
@@ -400,18 +577,29 @@ export async function montarPaginacao() {
 
   // Na abertura, sem resposta do servidor, o padrão vale: uma TV sem rede
   // ainda tem que mostrar as páginas em vez de ficar sem barra nenhuma.
-  aplicar(await carregarConfigPaginas() ?? CONFIG_PADRAO, true);
+  const [configInicial, manutencaoInicial] = await Promise.all([
+    carregarConfigPaginas(),
+    carregarManutencao(),
+  ]);
+  aplicar(configInicial ?? CONFIG_PADRAO, manutencaoInicial ?? MANUTENCAO_PADRAO, true);
   montarBotaoSair();
 
   setInterval(async () => {
-    const config = await carregarConfigPaginas();
+    const [config, novaManutencao] = await Promise.all([
+      carregarConfigPaginas(),
+      carregarManutencao(),
+    ]);
     // Sincronia que falhou não é configuração: sai sem tocar na barra e tenta
     // de novo em 30s. Antes, o padrão devolvido no erro passava por mudança e
     // remontava tudo — a barra pulava e a rotação recomeçava a cada blip.
-    if (!config) return;
+    // Vale igual para a manutenção: um blip de rede não pode nem ligar nem
+    // desligar o aviso.
+    if (!config || !novaManutencao) return;
     // Só remonta se mudou de verdade: rebuild a cada 30s reiniciaria a barra
     // de rotação e a TV nunca trocaria de página sozinha.
-    if (JSON.stringify(config) !== aplicada) aplicar(config);
+    if (JSON.stringify({ config, manutencao: novaManutencao }) !== aplicada) {
+      aplicar(config, novaManutencao);
+    }
   }, INTERVALO_SINCRONIA_MS);
 }
 

@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), "data");
 const DATA_FILE = join(DATA_DIR, "data.json");
 
-const PADRAO = { servicos: [], config: {}, railway: [], paginas: {} };
+const PADRAO = { servicos: [], config: {}, railway: [], paginas: {}, manutencao: {} };
 
 async function ler() {
   try {
@@ -94,5 +94,30 @@ export async function getPaginas() {
 export async function salvarPaginas({ ordem, visiveis }) {
   await atualizar((dados) => {
     dados.paginas = { ordem, visiveis };
+  });
+}
+
+// ===== Modo manutenção =====
+// `global`: true tira o dashboard INTEIRO do ar — a TV para a rotação e mostra
+// só o aviso. `paginas`: nomes de arquivo tirados do ar individualmente, que
+// saem da rotação e mostram o aviso se alguém abrir pela URL.
+// `mensagem` e `retorno` são texto livre exibido no aviso (ambos opcionais).
+//
+// Diferente de `visiveis` em getPaginas(): lá a página some da barra sem
+// explicação — aqui ela some anunciando o porquê, que é o caso de uma fonte de
+// dados em manutenção. Por isso são duas listas, e não uma.
+export async function getManutencao() {
+  const { manutencao } = await ler();
+  return {
+    global: manutencao?.global === true,
+    mensagem: typeof manutencao?.mensagem === "string" ? manutencao.mensagem : "",
+    retorno: typeof manutencao?.retorno === "string" ? manutencao.retorno : "",
+    paginas: Array.isArray(manutencao?.paginas) ? manutencao.paginas : [],
+  };
+}
+
+export async function salvarManutencao({ global, mensagem, retorno, paginas }) {
+  await atualizar((dados) => {
+    dados.manutencao = { global, mensagem, retorno, paginas };
   });
 }
