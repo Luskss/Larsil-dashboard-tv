@@ -3,6 +3,7 @@
 // por serviço — ver RAILWAY_SERVICOS no .env).
 
 import { escapar } from "./escape.js";
+import { agendar, obterParte } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
 
@@ -95,9 +96,7 @@ function desenhar(itens) {
 
 async function atualizar() {
   try {
-    const resp = await fetch("/api/railway-status");
-    const dados = await resp.json();
-    if (!resp.ok) throw dados.erro || "Erro ao carregar o status dos serviços.";
+    const dados = await obterParte("railway-status");
 
     mostrarAviso("");
     desenhar(dados.servicos);
@@ -106,5 +105,4 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("railway", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-railway" });

@@ -4,6 +4,7 @@
 import { aplicarNumeros } from "./animacoes.js";
 import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
+import { agendar, obterParte } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
 
@@ -88,9 +89,7 @@ let dadosAtuais = null;
 
 async function atualizar() {
   try {
-    const resp = await fetch("/api/ativos-ti");
-    const dados = await resp.json();
-    if (!resp.ok) throw dados.erro || "Erro ao carregar os dados de ativos de TI.";
+    const dados = await obterParte("ativos-ti");
 
     dadosAtuais = dados;
     mostrarAviso("");
@@ -100,5 +99,4 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("ativos-ti", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-ativos" });

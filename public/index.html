@@ -2077,6 +2077,112 @@
     }
     .railway-aviso--visivel { display: block; }
 
+    /* ===== Vista Status Externo: um card por fornecedor =====
+       Cards verticais: a logo grande no centro é o que se reconhece de longe,
+       com nome e status embaixo. A lista é configurável na Gestão, então o
+       número varia — auto-fit adensa a grade conforme entram mais serviços,
+       sem precisar de uma regra por quantidade. */
+    .status-externo-grid {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      gap: 1.25rem;
+      align-content: stretch;
+    }
+    .status-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: clamp(.4rem, 1.2vh, .9rem);
+      padding: clamp(1rem, 3vh, 2rem) clamp(.75rem, 1.5vw, 1.5rem);
+      border-radius: 1rem;
+      background: var(--surface);
+      /* O quadro inteiro na cor do estado: de longe, o contorno é o que se lê
+         primeiro — um card vermelho se destaca no meio dos verdes sem precisar
+         ler o rótulo. */
+      border: 3px solid var(--cor-status);
+      --cor-status: var(--text-dim);
+      min-width: 0;
+      overflow: hidden; /* card com incidente longo não empurra a grade */
+    }
+    .status-card--online      { --cor-status: var(--success); }
+    .status-card--degradado   { --cor-status: var(--alert); }
+    .status-card--erro        { --cor-status: var(--critical); }
+    .status-card--indefinido  { --cor-status: var(--text-dim); }
+
+    /* A marca ocupa o espaço que sobrar: com poucos serviços o card é alto e a
+       logo cresce; com muitos, encolhe sem espremer o nome e o status, que têm
+       tamanho próprio. */
+    .status-card__marca {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      width: 100%;
+    }
+    .status-card__logo {
+      max-width: min(100%, 11rem);
+      max-height: 100%;
+      object-fit: contain;
+    }
+    /* Sem logo configurada: as iniciais do serviço no lugar dela. */
+    .status-card__iniciais {
+      font-size: clamp(2rem, 7vh, 4.5rem);
+      font-weight: 800;
+      line-height: 1;
+      color: var(--text-dim);
+      letter-spacing: .02em;
+    }
+    .status-card__nome {
+      flex: 0 0 auto;
+      font-size: clamp(1.1rem, 2.4vh, 1.8rem);
+      font-weight: 800;
+      line-height: 1.15;
+      max-width: 100%;
+    }
+    .status-card__estado {
+      flex: 0 0 auto;
+      font-size: clamp(.8rem, 1.5vh, 1rem);
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--cor-status);
+    }
+    /* Só aparece quando algo está errado (ver status-servicos.js): o próprio
+       fato de haver texto aqui já sinaliza problema. */
+    .status-card__detalhe {
+      flex: 0 0 auto;
+      max-width: 100%;
+      font-size: clamp(.8rem, 1.4vh, 1rem);
+      color: var(--text-dim);
+      line-height: 1.25;
+      /* Título de incidente é longo: corta em duas linhas em vez de esticar o card. */
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .status-externo-rodape {
+      font-size: .85rem;
+      color: var(--text-dim);
+    }
+    .status-externo-aviso {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .status-externo-aviso--visivel { display: block; }
+
     /* ===== Vista Helpdesk: três colunas kanban; o excesso de cards rola
        DENTRO da coluna — a página em si nunca rola. ===== */
     .colunas {
@@ -3347,6 +3453,19 @@
     </section>
   </section>
 
+  <!-- ===== Vista Status Externo (Claude, ChatGPT, Railway, Azure) ===== -->
+  <section id="vista-status-externo" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="flex items-center justify-between mb-3">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Status Externo</h1>
+      <div id="status-externo-rodape" class="status-externo-rodape"></div>
+    </div>
+
+    <div id="status-externo-aviso" class="status-externo-aviso" role="alert"></div>
+
+    <!-- Um card por fornecedor (preenchido pelo status-servicos.js) -->
+    <div id="status-externo-cards" class="status-externo-grid mt-3"></div>
+  </section>
+
   <!-- Toast de novos chamados no helpdesk -->
   <div id="toast-novos" class="toast-novos" role="status" aria-live="polite">
     <span class="toast-novos__bolinha"></span>
@@ -3367,5 +3486,8 @@
   <script src="./helpdesk-chamados.js" type="module"></script>
   <script src="./reservas-veiculos.js" type="module"></script>
   <script src="./railway-status.js" type="module"></script>
+  <script src="./status-servicos.js" type="module"></script>
+  <script src="./telemetria.js" type="module"></script>
+  <script src="./reload-diario.js" type="module"></script>
 </body>
 </html>

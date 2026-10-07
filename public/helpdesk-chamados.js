@@ -5,6 +5,7 @@
 
 import { aplicarNumeros } from "./animacoes.js";
 import { escapar } from "./escape.js";
+import { agendar, obterParte } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 30 * 1000; // painel de TV: atualiza quase em tempo real
 
@@ -188,9 +189,7 @@ function tocarSino() {
 
 async function atualizar() {
   try {
-    const resp = await fetch("/api/helpdesk-chamados");
-    const dados = await resp.json();
-    if (!resp.ok) throw dados.erro || "Erro ao carregar os chamados do helpdesk.";
+    const dados = await obterParte("helpdesk-chamados");
 
     const idsNovos = detectarNovos(dados);
     mostrarAviso("");
@@ -201,5 +200,4 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("helpdesk", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-helpdesk", segundoPlano: true });

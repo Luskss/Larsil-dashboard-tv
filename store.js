@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), "data");
 const DATA_FILE = join(DATA_DIR, "data.json");
 
-const PADRAO = { servicos: [], config: {}, railway: [], paginas: {}, manutencao: {} };
+const PADRAO = { servicos: [], config: {}, railway: [], paginas: {}, manutencao: {}, statusExterno: [] };
 
 async function ler() {
   try {
@@ -74,6 +74,21 @@ export async function listarRailway() {
 export async function salvarRailway(itens) {
   await atualizar((dados) => {
     dados.railway = Array.isArray(itens) ? itens : [];
+  });
+}
+
+// ===== Status externo (vista "Status Externo") =====
+// Cada item é { id, nome, tipo, url, logo } — um serviço de fora monitorado
+// pela página de status do próprio fornecedor. `tipo` diz COMO ler a url
+// (statuspage | instatus | rss — ver server.js); `logo` é um data URI opcional.
+// Lista vazia = nunca configurado, e aí o server usa os padrões embutidos.
+export async function listarStatusExterno() {
+  return (await ler()).statusExterno;
+}
+
+export async function salvarStatusExterno(itens) {
+  await atualizar((dados) => {
+    dados.statusExterno = Array.isArray(itens) ? itens : [];
   });
 }
 

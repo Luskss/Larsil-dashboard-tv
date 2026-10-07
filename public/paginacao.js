@@ -53,6 +53,7 @@ export const PAGINAS = [
   { rotulo: "Helpdesk",     arquivo: "helpdesk-chamados.html",   vista: "vista-helpdesk",  hash: "#helpdesk" },
   { rotulo: "Reservas de Veículos", arquivo: "reservas-veiculos.html", vista: "vista-reservas", hash: "#reservas" },
   { rotulo: "Serviços",     arquivo: "railway-status.html",      vista: "vista-railway",   hash: "#servicos" },
+  { rotulo: "Status Externo", arquivo: "status-servicos.html",   vista: "vista-status-externo", hash: "#status-externo" },
 ];
 
 // Configuração vinda do servidor. `visiveis: null` significa "ninguém

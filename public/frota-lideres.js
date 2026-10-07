@@ -8,6 +8,7 @@ import { consultarFrotaLideres } from "./downdetector.js";
 import { aplicarNumeros } from "./animacoes.js";
 import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
+import { agendar } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras vistas
 
@@ -134,5 +135,4 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("frota-lideres", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-lideres" });

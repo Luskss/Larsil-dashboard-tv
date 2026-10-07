@@ -1,5 +1,6 @@
 import { getConfig, consultarClima } from "./downdetector.js";
 import { montarPaginacao } from "./paginacao.js";
+import { agendar, mudou, esquecer } from "./agenda.js";
 
 // O dashboard inteiro se atualiza neste ritmo (hoje só o clima é dinâmico;
 // widgets futuros devem se pendurar no mesmo intervalo).
@@ -184,6 +185,7 @@ function descricaoClima(codigo) {
 
 // Zera o widget mostrando só a mensagem (sem cidade / erro de consulta).
 function estadoClima(mensagem) {
+  esquecer("clima"); // o que está na tela deixa de ser o último clima bom
   document.querySelector("#clima-temp").textContent = "--°";
   document.querySelector("#clima-cond").textContent = mensagem;
   for (const id of ["sensacao", "umidade", "vento"]) {
@@ -232,6 +234,9 @@ async function atualizarClima() {
 
   try {
     const clima = await consultarClima(cidade);
+    // Mesmo clima de antes: refazer a semana reiniciaria a animação de entrada
+    // dos cards sem nada de novo.
+    if (!mudou("clima", clima)) return;
     document.querySelector("#clima-temp").textContent = `${Math.round(clima.temperatura)}°`;
     document.querySelector("#clima-cond").textContent = descricaoClima(clima.codigo);
     document.querySelector("#clima-sensacao").textContent = `${Math.round(clima.sensacao)}°`;
@@ -259,8 +264,7 @@ window.addEventListener("DOMContentLoaded", () => {
   iniciarRelogio();
   iniciarSaudacao();
   renderTiles();
-  atualizarClima();
-  atualizarLua();
-  setInterval(atualizarClima, INTERVALO_ATUALIZACAO_MS);
-  setInterval(atualizarLua, INTERVALO_ATUALIZACAO_MS);
+  const opcoes = { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-dashboard" };
+  agendar("clima", atualizarClima, opcoes);
+  agendar("lua", atualizarLua, opcoes);
 });

@@ -4,6 +4,8 @@
 // main.js e configuracoes.js não precisam mudar. Só o transporte mudou:
 // antes era invoke()/localStorage; agora é fetch para /api/*.
 
+import { obterParte } from "./agenda.js";
+
 async function pedir(url, opcoes) {
   const resposta = await fetch(url, opcoes);
   if (!resposta.ok) {
@@ -50,29 +52,44 @@ export async function salvarRailwayTokens(tokens) {
   });
 }
 
+// ===== Serviços da vista "Status Externo" (tela de Gestão) =====
+// Sem segredo envolvido (ao contrário dos tokens do Railway): a lista vai e
+// volta inteira, logos em data URI incluídas.
+export async function listarStatusExterno() {
+  return pedir("/api/status-externo-config");
+}
+
+export async function salvarStatusExterno(servicos) {
+  return pedir("/api/status-externo-config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ servicos }),
+  });
+}
+
 export async function consultarStatus(slug) {
   const { status } = await pedir(`/api/status/${encodeURIComponent(slug)}`);
   return status;
 }
 
 export async function consultarFrota() {
-  return pedir("/api/frota");
+  return obterParte("frota");
 }
 
 export async function consultarFrotaLocalizacao() {
-  return pedir("/api/frota-localizacao");
+  return obterParte("frota-localizacao");
 }
 
 export async function consultarFrotaLideres() {
-  return pedir("/api/frota-lideres");
+  return obterParte("frota-lideres");
 }
 
 export async function consultarApontamento() {
-  return pedir("/api/apontamento");
+  return obterParte("apontamento");
 }
 
 export async function consultarVeiculosReservas() {
-  return pedir("/api/veiculos-reservas");
+  return obterParte("veiculos-reservas");
 }
 
 export async function consultarClima(cidade) {

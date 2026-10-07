@@ -5,6 +5,7 @@ import { consultarFrota } from "./downdetector.js";
 import { aplicarNumeros } from "./animacoes.js";
 import { observarVista } from "./visibilidade.js";
 import { escapar } from "./escape.js";
+import { agendar, mudou, esquecer } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do dashboard
 const INTERVALO_TROCA_MS = 30 * 1000; // alterna o donut entre status e tipo
@@ -225,6 +226,8 @@ async function atualizar() {
     const dados = await consultarFrota();
     dadosAtuais = dados;
     mostrarAviso("");
+    // Resposta idêntica à anterior: nada a redesenhar (o donut é SVG).
+    if (!mudou("frotas", dados)) return;
 
     // Os KPIs de status são elementos fixos no HTML, então nunca passavam
     // pelo "só se mudou" do data-valor: a cada 5 min os quatro voltavam a
@@ -238,6 +241,7 @@ async function atualizar() {
     desenharCardsTipos(dados.tipos);
 
   } catch (erro) {
+    esquecer("frotas");
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar os dados da frota.");
   }
 }
@@ -260,8 +264,7 @@ function alternarVisao() {
   }, DURACAO_FADE_MS);
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("frotas", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-frotas" });
 
 // A alternância status <-> tipos redesenha o donut (SVG) a cada 30s. Só faz
 // sentido com a vista no ar: escondida, ninguém vê a troca e ela só rouba

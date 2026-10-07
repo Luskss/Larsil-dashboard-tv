@@ -28,6 +28,7 @@
 //   GET  /api/tarefas-atuais     -> em que cada pessoa da equipe está trabalhando (schema gestor)
 //   GET  /api/veiculos-reservas  -> reservas dos carros (dbo.VEICULOS_RESERVAS_TESTE x dbo.VEICULOS_TESTE)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
+//   GET  /api/status-externo     -> status de Claude, ChatGPT, Railway e Azure (páginas oficiais)
 
 import express from "express";
 import compression from "compression";
@@ -120,9 +121,9 @@ app.use((req, res, next) => {
 // qualquer um sem login faria o servidor bufferizar 8 MB por requisição. Só a
 // rota das logos (base64, pesado) aceita mais, e lá o parser é montado depois
 // da checagem de sessão.
-const ROTA_LOGOS = "/api/servicos";
+const ROTAS_LOGOS = new Set(["/api/servicos", "/api/status-externo-config"]);
 app.use((req, res, next) =>
-  req.path === ROTA_LOGOS ? next() : express.json({ limit: "64kb" })(req, res, next)
+  ROTAS_LOGOS.has(req.path) ? next() : express.json({ limit: "64kb" })(req, res, next)
 );
 
 // ===== Login (usuário/senha único, ver auth.js) =====
@@ -205,7 +206,86 @@ app.post("/logout", (req, res) => {
 app.use(exigirSessao);
 
 // Logos em base64: limite maior, mas só depois da sessão conferida.
-app.use(ROTA_LOGOS, express.json({ limit: "8mb" }));
+for (const rota of ROTAS_LOGOS) app.use(rota, express.json({ limit: "8mb" }));
+
+// ===== Painel agregado (/api/painel) =====
+// A TV pedia ~12 rotas separadas pelo Wi-Fi, quase todas no mesmo instante. Aqui
+// cada rota "de dados" se registra com um nome (rotaPainel): continua existindo
+// em /api/<nome>, e o mesmo handler pode ser chamado em lote por
+// /api/painel?partes=a,b,c — uma ida e volta só, usando os mesmos caches
+// (comCacheSql, dolarCache...). Os handlers só usam res.status()/res.json(), o
+// que permite chamá-los daqui com uma resposta de mentira que captura o corpo.
+const PARTES_PAINEL = new Map(); // nome -> handler (req, res)
+const MAX_PARTES_PAINEL = 20;
+const TIMEOUT_PARTE_MS = 25 * 1000;
+
+function rotaPainel(nome, caminho, handler) {
+  PARTES_PAINEL.set(nome, handler);
+  app.get(caminho, handler);
+}
+
+// Roda um handler de rota sem HTTP: devolve { ok, dados } ou { ok:false, erro }.
+// Uma parte que falha não derruba as outras — cada uma carrega o próprio erro.
+function executarParte(handler, req) {
+  return new Promise((resolve) => {
+    let codigo = 200;
+    let resolvido = false;
+    const fim = (r) => {
+      if (resolvido) return;
+      resolvido = true;
+      clearTimeout(limite);
+      resolve(r);
+    };
+    const resFalso = {
+      status(c) { codigo = c; return this; },
+      json(corpo) {
+        fim(codigo < 400
+          ? { ok: true, dados: corpo }
+          : { ok: false, erro: corpo?.erro || "Falha na requisição", detalhe: corpo?.detalhe });
+        return this;
+      },
+    };
+    const limite = setTimeout(() => fim({ ok: false, erro: "Tempo esgotado" }), TIMEOUT_PARTE_MS);
+    // Handler async sem try/catch (railway-status) rejeita a promise em vez de
+    // responder: sem este catch a parte ficaria pendurada até o timeout.
+    Promise.resolve()
+      .then(() => handler(req, resFalso))
+      .catch((erro) => {
+        console.error("Erro numa parte do painel:", erro.message);
+        fim({ ok: false, erro: "Erro interno" });
+      });
+  });
+}
+
+app.get("/api/painel", async (req, res) => {
+  const pedidas = [...new Set(String(req.query.partes || "").split(",").map((p) => p.trim()).filter(Boolean))];
+  if (pedidas.length === 0 || pedidas.length > MAX_PARTES_PAINEL) {
+    return res.status(400).json({ erro: "Parâmetro 'partes' inválido" });
+  }
+  const resultado = {};
+  await Promise.all(pedidas.map(async (nome) => {
+    const handler = PARTES_PAINEL.get(nome);
+    resultado[nome] = handler
+      ? await executarParte(handler, req)
+      : { ok: false, erro: "Parte desconhecida" };
+  }));
+  res.json(resultado);
+});
+
+// ===== Telemetria da TV =====
+// A página manda de tempos em tempos o que o navegador do Fire Stick mediu
+// (travadas longas, memória, tempo de atualização — ver public/telemetria.js).
+// Só vai para o log, uma linha por envio: serve para decidir o que otimizar
+// com número na mão. O corpo é descartado se vier fora do formato.
+const MAX_TELEMETRIA_CHARS = 2000;
+app.post("/api/telemetria", (req, res) => {
+  const corpo = req.body;
+  if (corpo && typeof corpo === "object" && !Array.isArray(corpo)) {
+    const linha = JSON.stringify(corpo);
+    if (linha.length <= MAX_TELEMETRIA_CHARS) console.log(`[telemetria] ${linha}`);
+  }
+  res.status(204).end();
+});
 
 // ===== Serviços =====
 app.get("/api/servicos", async (_req, res) => {
@@ -466,7 +546,7 @@ async function dolarPtax() {
   };
 }
 
-app.get("/api/dolar", async (_req, res) => {
+rotaPainel("dolar", "/api/dolar", async (_req, res) => {
   if (dolarCache && Date.now() - dolarCache.em < DOLAR_CACHE_MS) {
     return res.json(dolarCache.dados);
   }
@@ -681,9 +761,9 @@ function rotaCepea(chave, nome) {
   };
 }
 
-app.get("/api/soja", rotaCepea("soja", "soja"));
-app.get("/api/cafe", rotaCepea("cafe", "café"));
-app.get("/api/milho", rotaCepea("milho", "milho"));
+rotaPainel("soja", "/api/soja", rotaCepea("soja", "soja"));
+rotaPainel("cafe", "/api/cafe", rotaCepea("cafe", "café"));
+rotaPainel("milho", "/api/milho", rotaCepea("milho", "milho"));
 
 // ===== Selic (meta do Copom — série 432 do SGS/Banco Central) =====
 // A meta só muda nas reuniões do Copom (a cada ~45 dias), por isso o cache
@@ -705,7 +785,7 @@ async function buscarSelic() {
   return { valor, data: linhas.at(-1).data };
 }
 
-app.get("/api/selic", async (_req, res) => {
+rotaPainel("selic", "/api/selic", async (_req, res) => {
   if (selicCache && Date.now() - selicCache.em < SELIC_CACHE_MS) {
     return res.json(selicCache.dados);
   }
@@ -769,7 +849,7 @@ async function buscarIgpm() {
   };
 }
 
-app.get("/api/igpm", async (_req, res) => {
+rotaPainel("igpm", "/api/igpm", async (_req, res) => {
   if (igpmCache && Date.now() - igpmCache.em < IGPM_CACHE_MS) {
     return res.json(igpmCache.dados);
   }
@@ -893,7 +973,7 @@ const STATUS_TILES = {
   "SEM ATIVIDADE": "semAtividade",
 };
 
-app.get("/api/frota", async (_req, res) => {
+rotaPainel("frota", "/api/frota", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -958,7 +1038,7 @@ app.get("/api/frota", async (_req, res) => {
 // já que várias máquinas compartilham a mesma frente/coordenada — isso deixa
 // o mapa legível numa TV. Cada grupo traz a contagem, as classes mais comuns
 // e a data da última posição.
-app.get("/api/frota-localizacao", async (_req, res) => {
+rotaPainel("frota-localizacao", "/api/frota-localizacao", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -1055,7 +1135,7 @@ function ordenarComLarsilNoCentro(grupos) {
   return [...outros.slice(0, meio), ...larsil, ...outros.slice(meio)];
 }
 
-app.get("/api/frota-lideres", async (_req, res) => {
+rotaPainel("frota-lideres", "/api/frota-lideres", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -1173,7 +1253,7 @@ function estadoApontamento(diasUteis, nunca) {
 
 const iso = (data) => data.toISOString().slice(0, 10);
 
-app.get("/api/apontamento", async (_req, res) => {
+rotaPainel("apontamento", "/api/apontamento", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -1445,7 +1525,7 @@ app.get("/api/apontamento", async (_req, res) => {
 // (pedido do Lucas); outros tipos que existam na tabela ficam fora por ora.
 const TIPOS_ATIVOS_TI = ["NOTEBOOK", "MONITOR", "CELULAR", "STARLINK"];
 
-app.get("/api/ativos-ti", async (_req, res) => {
+rotaPainel("ativos-ti", "/api/ativos-ti", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -1529,7 +1609,7 @@ const TOTAL_AJUSTE_MANUAL = Object.values(AJUSTE_MANUAL_CLASSE).reduce((s, n) =>
 // o valor já normalizado. Coordenador novo em campo: acrescente aqui.
 const COORDENADORES_CAMPO = ["TONIEL RODRIGUES", "FABIO BRUM CAMPELO"];
 
-app.get("/api/colaboradores", async (_req, res) => {
+rotaPainel("colaboradores", "/api/colaboradores", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -1704,7 +1784,7 @@ const colunaHelpdeskSql = (alias = "") =>
 
 const CHAMADOS_POR_COLUNA = 5;
 
-app.get("/api/helpdesk-chamados", async (_req, res) => {
+rotaPainel("helpdesk-chamados", "/api/helpdesk-chamados", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -1796,7 +1876,7 @@ const TAREFAS_POR_PESSOA = 20;
 // concluídas ficam de fora dos cards (viram só o contador do dia, abaixo).
 const SITUACOES_ABERTAS = ["andamento", "pendente"];
 
-app.get("/api/tarefas-atuais", async (_req, res) => {
+rotaPainel("tarefas-atuais", "/api/tarefas-atuais", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -2002,7 +2082,7 @@ function somarDias(data, dias) {
   return d.toISOString().slice(0, 10);
 }
 
-app.get("/api/veiculos-reservas", async (_req, res) => {
+rotaPainel("veiculos-reservas", "/api/veiculos-reservas", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
     return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
   }
@@ -2226,7 +2306,7 @@ async function servicosDoToken({ rotulo, token }) {
   });
 }
 
-app.get("/api/railway-status", async (_req, res) => {
+rotaPainel("railway-status", "/api/railway-status", async (_req, res) => {
   const tokens = await listaTokensRailway();
   if (tokens.length === 0) {
     return res.status(503).json({ erro: "Nenhum serviço configurado — adicione tokens na tela de Gestão" });
@@ -2288,6 +2368,386 @@ app.post("/api/railway-tokens", async (req, res) => {
   }
 
   await store.salvarRailway(itens);
+  res.json({ ok: true });
+});
+
+// ===== Status de serviços externos (Claude, ChatGPT, Railway, Azure) =====
+// Painel "está fora para mim ou para todos?": lê a página de status oficial de
+// cada fornecedor que a TI usa no dia a dia. Nenhuma exige chave.
+//
+// A lista é configurável na tela de Gestão (ver /api/status-externo-config):
+// cada item é { nome, tipo, url, componentes, logo }, e `tipo` escolhe o leitor
+// abaixo. Enquanto ninguém configurar nada, vale STATUS_EXTERNO_PADRAO.
+//
+// Três formatos diferentes, um por fornecedor — não há um padrão comum:
+//
+//   Statuspage (Claude, ChatGPT): /api/v2/summary.json traz um resumo pronto
+//     em status.indicator ("none" | "minor" | "major" | "critical") e a lista
+//     de componentes. É o caso fácil. O domínio da Anthropic redireciona para
+//     status.claude.com; apontamos direto para o destino para não gastar um
+//     salto a cada consulta.
+//
+//   Instatus (Railway): a página é um SPA e NÃO publica JSON — /api/v2/*,
+//     /summary.json e /badge todos devolvem o próprio HTML (catch-all). O que
+//     sobra é ler o HTML já renderizado no servidor, onde o cabeçalho carrega
+//     data-severity="<estado>". É um seletor só, e é o mesmo atributo que a
+//     página usa para se pintar, então quebra junto com um redesenho do site —
+//     se vier vazio, o serviço aparece como "indefinido" em vez de inventar
+//     um "online" (ver RAILWAY_SEVERIDADE).
+//
+//   RSS (Azure): a Microsoft não tem Statuspage; publica um feed de incidentes.
+//     Feed sem item recente = nada acontecendo. Só olhamos a data do item mais
+//     novo: se for das últimas AZURE_JANELA_MS, há incidente aberto.
+//
+// Tudo com cache de 2 min: a vista atualiza a cada 5 min e a TV não é a única
+// a pedir (gestão, outra aba), mas um incidente precisa aparecer rápido.
+const STATUS_EXTERNO_CACHE_MS = 2 * 60 * 1000;
+let statusExternoCache = null; // { dados, em }
+
+// Estado normalizado que a UI entende, igual ao da vista do Railway:
+// "online" | "degradado" | "erro" | "indefinido" (não deu para saber).
+const STATUSPAGE_ESTADO = {
+  none: "online",
+  minor: "degradado",
+  major: "erro",
+  critical: "erro",
+  maintenance: "degradado",
+};
+
+// data-severity do Instatus -> nosso estado. Ausente/desconhecido = indefinido.
+const RAILWAY_SEVERIDADE = {
+  operational: "online",
+  degraded: "degradado",
+  under_maintenance: "degradado",
+  maintenance: "degradado",
+  partial: "erro",
+  major: "erro",
+  critical: "erro",
+};
+
+const RSS_JANELA_MS = 6 * 60 * 60 * 1000; // incidente "aberto" = postado nas últimas 6h
+
+// Pior estado vence: um card que resume vários componentes mostra o mais grave
+// deles (um componente fora + cinco ok = "erro", não "quase tudo bem").
+const GRAVIDADE = { online: 0, indefinido: 1, degradado: 2, erro: 3 };
+
+function piorEstado(estados) {
+  return estados.reduce((pior, e) => (GRAVIDADE[e] > GRAVIDADE[pior] ? e : pior), "online");
+}
+
+// Statuspage -> nosso estado, por componente.
+const COMPONENTE_ESTADO = {
+  operational: "online",
+  degraded_performance: "degradado",
+  under_maintenance: "degradado",
+  partial_outage: "erro",
+  major_outage: "erro",
+};
+
+// Casa os componentes escolhidos na Gestão com os que a Statuspage devolve.
+// Comparação frouxa (minúsculas, "contém") de propósito: o usuário digita
+// "Claude Code" ou "api", não o nome exato "Claude API (api.anthropic.com)".
+function componentesEscolhidos(componentes, filtros) {
+  const alvos = filtros.map((f) => f.trim().toLowerCase()).filter(Boolean);
+  if (alvos.length === 0) return componentes;
+  return componentes.filter((c) => {
+    const nome = (c.name || "").toLowerCase();
+    return alvos.some((alvo) => nome.includes(alvo));
+  });
+}
+
+// Statuspage: um JSON por fornecedor, com resumo, componentes e incidentes.
+//
+// `componentes` (opcional) restringe o card a uma parte do fornecedor — é o que
+// permite "Claude Code" e "Claude API" como dois cards da mesma página, ou um
+// card do ChatGPT que ignora o chat e olha só a API. Com filtro, o estado vem
+// dos componentes escolhidos; sem filtro, do indicador global da página (que
+// também cobre incidente sem componente associado).
+async function statusStatuspage({ nome, url, site, componentes: filtros = [] }) {
+  const dados = await buscarJson(url, { tentativas: 2, timeoutMs: 8000 });
+  // Componentes em grupo repetem o estado dos filhos; só os folha interessam.
+  const todos = (dados.components || []).filter((c) => !c.group);
+  const escolhidos = componentesEscolhidos(todos, filtros);
+  const comProblema = escolhidos.filter((c) => c.status !== "operational");
+
+  // Um filtro que não casa com nada é erro de digitação na Gestão, e mostrar
+  // "online" nesse caso seria mentir — some com o serviço do radar justamente
+  // porque o nome está errado.
+  if (filtros.length > 0 && escolhidos.length === 0) {
+    return {
+      nome, site, estado: "indefinido",
+      descricao: "Nenhum componente com esse nome na página de status",
+      afetados: [], total: 0, fora: 0,
+      atualizadoEm: dados.page?.updated_at || null,
+    };
+  }
+
+  // O que está acontecendo vem dos INCIDENTES abertos, não dos componentes:
+  // medido nos dois fornecedores, dá para o indicador estar "minor" com os 25
+  // componentes "operational" (OpenAI: duas falhas no Codex) — ler só os
+  // componentes mostraria "degradado" sem dizer o quê. O título do incidente é
+  // a frase que o fornecedor escreveu, então é o melhor texto disponível; os
+  // componentes entram quando não há incidente aberto (caso de manutenção).
+  //
+  // Com filtro, só entram os incidentes que tocam os componentes escolhidos:
+  // senão uma falha no Sora apareceria no card "ChatGPT API".
+  const nomesEscolhidos = new Set(escolhidos.map((c) => c.id));
+  const incidentes = (dados.incidents || [])
+    .filter((i) => filtros.length === 0 || (i.components || []).some((c) => nomesEscolhidos.has(c.id)))
+    .map((i) => i.name)
+    .filter(Boolean);
+
+  const estado = filtros.length > 0
+    ? piorEstado(escolhidos.map((c) => COMPONENTE_ESTADO[c.status] || "indefinido"))
+    : STATUSPAGE_ESTADO[dados.status?.indicator || "none"] || "indefinido";
+
+  return {
+    nome,
+    site,
+    estado,
+    // Sem filtro a frase da página serve ("Partial System Degradation"); com
+    // filtro ela fala do fornecedor inteiro, então não cabe neste card.
+    descricao: filtros.length > 0
+      ? (comProblema.length === 0 ? "Operacional" : "")
+      : (dados.status?.description || ""),
+    // Responde "o chat caiu ou só a API?".
+    afetados: (incidentes.length > 0 ? incidentes : comProblema.map((c) => c.name)).slice(0, 3),
+    total: escolhidos.length,
+    // Quantos componentes estão fora, para a linha "x de y" na tela.
+    fora: comProblema.length,
+    atualizadoEm: dados.page?.updated_at || null,
+  };
+}
+
+// Instatus (Railway): a página é um SPA; estado no data-severity do cabeçalho.
+async function statusInstatus({ nome, url, site }) {
+  const html = await buscarTexto(url, {
+    tentativas: 2,
+    timeoutMs: 10000,
+    headers: { "User-Agent": UA_NAVEGADOR },
+  });
+  const severidade = html.match(/data-severity="([a-z_]+)"/)?.[1] || "";
+  // O texto do cabeçalho ("Fully Operational", "Degraded Performance"...) serve
+  // de descrição; se o layout mudar, fica só o estado.
+  const titulo = html.match(/leading-\[1\.0\][^>]*>([^<]{3,60})</)?.[1] || "";
+  return {
+    nome,
+    site: site || url,
+    estado: RAILWAY_SEVERIDADE[severidade] || "indefinido",
+    descricao: titulo.trim(),
+    afetados: [],
+    total: 0,
+    fora: 0,
+    atualizadoEm: null,
+  };
+}
+
+// RSS (Azure): feed de incidentes. <pubDate> do item mais novo dentro da janela.
+async function statusRss({ nome, url, site }) {
+  const xml = await buscarTexto(url, { tentativas: 2, timeoutMs: 10000 });
+  const itens = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
+  const recentes = itens
+    .map((item) => ({
+      titulo: (item.match(/<title>([\s\S]*?)<\/title>/)?.[1] || "")
+        .replace(/<!\[CDATA\[|\]\]>/g, "")
+        .trim(),
+      em: Date.parse(item.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || ""),
+    }))
+    .filter((i) => Number.isFinite(i.em) && Date.now() - i.em < RSS_JANELA_MS);
+
+  return {
+    nome,
+    site: site || url,
+    estado: recentes.length > 0 ? "degradado" : "online",
+    descricao: recentes.length > 0 ? recentes[0].titulo : "Nenhum incidente nas últimas 6h",
+    afetados: recentes.map((i) => i.titulo).slice(0, 3),
+    total: 0,
+    fora: recentes.length,
+    atualizadoEm: recentes[0] ? new Date(recentes[0].em).toISOString() : null,
+  };
+}
+
+// Como ler cada tipo. O `tipo` salvo na Gestão escolhe o leitor; um tipo
+// desconhecido (data.json editado à mão) cai no card "indefinido" do catch.
+const LEITORES_STATUS = {
+  statuspage: statusStatuspage,
+  instatus: statusInstatus,
+  rss: statusRss,
+};
+
+// Lista de fábrica, usada enquanto ninguém configurou nada na Gestão. Claude
+// aparece dividido (Claude Code e API são serviços distintos para a TI, e a
+// Statuspage os expõe como componentes separados) e o ChatGPT entra só com os
+// componentes de API.
+const STATUS_EXTERNO_PADRAO = [
+  {
+    id: "padrao-claude-code",
+    nome: "Claude Code",
+    tipo: "statuspage",
+    url: "https://status.claude.com/api/v2/summary.json",
+    site: "https://status.claude.com",
+    componentes: ["Claude Code"],
+  },
+  {
+    id: "padrao-claude-api",
+    nome: "Claude API",
+    tipo: "statuspage",
+    url: "https://status.claude.com/api/v2/summary.json",
+    site: "https://status.claude.com",
+    componentes: ["Claude API"],
+  },
+  {
+    id: "padrao-chatgpt-api",
+    nome: "ChatGPT API",
+    tipo: "statuspage",
+    url: "https://status.openai.com/api/v2/summary.json",
+    site: "https://status.openai.com",
+    componentes: ["Chat Completions", "Responses", "Embeddings", "Images", "Audio", "Batch", "Files"],
+  },
+  {
+    id: "padrao-railway",
+    nome: "Railway",
+    tipo: "instatus",
+    url: "https://status.railway.com/",
+    site: "https://status.railway.com",
+    componentes: [],
+  },
+  {
+    id: "padrao-azure",
+    nome: "Azure",
+    tipo: "rss",
+    url: "https://azurestatuscdn.azureedge.net/en-us/status/feed/",
+    site: "https://azure.status.microsoft/pt-br/status",
+    componentes: [],
+  },
+  {
+    id: "padrao-cloudflare",
+    nome: "Cloudflare",
+    tipo: "statuspage",
+    url: "https://www.cloudflarestatus.com/api/v2/summary.json",
+    site: "https://www.cloudflarestatus.com",
+    // Sem filtro este card viveria vermelho: o Cloudflare publica os ~470
+    // datacenters dele como componentes, e há sempre algumas dezenas em
+    // manutenção de rotina pelo mundo (medido: 59 fora, 57 deles datacenters).
+    // Nada disso afeta um site atrás do Cloudflare, então o card olha os
+    // serviços globais que afetariam: entrega, DNS, firewall, SSL e API.
+    componentes: ["CDN/Cache", "Authoritative DNS", "Firewall", "SSL Certificate Provisioning", "Workers", "API"],
+  },
+  {
+    id: "padrao-vercel",
+    nome: "Vercel",
+    tipo: "statuspage",
+    url: "https://www.vercel-status.com/api/v2/summary.json",
+    site: "https://www.vercel-status.com",
+    componentes: [],
+  },
+  {
+    id: "padrao-github",
+    nome: "GitHub",
+    tipo: "statuspage",
+    url: "https://www.githubstatus.com/api/v2/summary.json",
+    site: "https://www.githubstatus.com",
+    componentes: [],
+  },
+];
+
+async function listaStatusExterno() {
+  const salvos = await store.listarStatusExterno();
+  return salvos.length > 0 ? salvos : STATUS_EXTERNO_PADRAO;
+}
+
+// O cache guarda o que foi desenhado; salvar na Gestão o invalida (ver o POST),
+// senão uma mudança levaria até 2 min para aparecer e pareceria que não salvou.
+rotaPainel("status-externo", "/api/status-externo", async (_req, res) => {
+  if (statusExternoCache && Date.now() - statusExternoCache.em < STATUS_EXTERNO_CACHE_MS) {
+    return res.json(statusExternoCache.dados);
+  }
+
+  const configurados = await listaStatusExterno();
+
+  // Um fornecedor fora do ar (ou bloqueando o IP do Railway) não pode derrubar
+  // os outros: cada consulta carrega a própria falha, e o card continua na tela
+  // como "indefinido" — uma linha que some não se percebe numa TV.
+  const servicos = await Promise.all(
+    configurados.map(async (item) => {
+      const leitor = LEITORES_STATUS[item.tipo];
+      try {
+        if (!leitor) throw new Error(`Tipo desconhecido: ${item.tipo}`);
+        const lido = await leitor(item);
+        return { ...lido, id: item.id, logo: item.logo || null };
+      } catch (erro) {
+        console.error(`Erro ao consultar status de ${item.nome}:`, erro.message);
+        return {
+          id: item.id,
+          nome: item.nome,
+          logo: item.logo || null,
+          site: item.site || "",
+          estado: "indefinido",
+          descricao: "Não foi possível consultar",
+          afetados: [],
+          total: 0,
+          fora: 0,
+          atualizadoEm: null,
+        };
+      }
+    })
+  );
+
+  const dados = { servicos, consultadoEm: new Date().toISOString() };
+  statusExternoCache = { dados, em: Date.now() };
+  res.json(dados);
+});
+
+// ===== Gerenciamento dos serviços externos (tela de Gestão) =====
+// Diferente dos tokens do Railway, aqui não há segredo: a lista vai e volta
+// inteira, logo incluída. A logo é um data URI (mesmo formato e validação das
+// logos de /api/servicos) e por isso esta rota também precisa do parser grande.
+const MAX_STATUS_EXTERNO = 24;
+const MAX_COMPONENTES = 20;
+
+function limparStatusExterno(bruto) {
+  const nome = String(bruto?.nome ?? "").trim().slice(0, TEXTO_MAX);
+  const url = String(bruto?.url ?? "").trim().slice(0, 500);
+  const tipo = LEITORES_STATUS[bruto?.tipo] ? bruto.tipo : "statuspage";
+  if (!nome || !url) return null;
+  // Só http(s): sem isto um "file:///" ou "http://169.254.169.254" salvo aqui
+  // viraria uma requisição feita PELO servidor (SSRF) a cada 2 minutos.
+  if (!/^https?:\/\//i.test(url)) return null;
+
+  const logo = typeof bruto?.logo === "string" ? bruto.logo : null;
+  const logoOk = logo && logo.length <= LOGO_MAX && LOGO_PERMITIDA.test(logo);
+
+  return {
+    id: String(bruto?.id ?? "").trim() || randomUUID(),
+    nome,
+    tipo,
+    url,
+    site: String(bruto?.site ?? "").trim().slice(0, 500),
+    componentes: (Array.isArray(bruto?.componentes) ? bruto.componentes : [])
+      .map((c) => String(c).trim().slice(0, TEXTO_MAX))
+      .filter(Boolean)
+      .slice(0, MAX_COMPONENTES),
+    logo: logoOk ? logo : null,
+  };
+}
+
+app.get("/api/status-externo-config", async (_req, res) => {
+  const salvos = await store.listarStatusExterno();
+  res.json({
+    servicos: salvos.length > 0 ? salvos : STATUS_EXTERNO_PADRAO,
+    // Sinaliza que a lista ainda é a de fábrica (nada salvo no data.json).
+    usandoPadrao: salvos.length === 0,
+  });
+});
+
+app.post("/api/status-externo-config", async (req, res) => {
+  const recebidos = Array.isArray(req.body?.servicos) ? req.body.servicos : [];
+  if (recebidos.length > MAX_STATUS_EXTERNO) {
+    return res.status(400).json({ erro: `Máximo de ${MAX_STATUS_EXTERNO} serviços` });
+  }
+  await store.salvarStatusExterno(recebidos.map(limparStatusExterno).filter(Boolean));
+  // A lista mudou: o que está no cache descreve a configuração antiga.
+  statusExternoCache = null;
   res.json({ ok: true });
 });
 

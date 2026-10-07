@@ -129,6 +129,90 @@
       min-height: 1.2em;
     }
 
+    /* ===== Serviços do Status Externo =====
+       Cada linha tem campos demais para caber numa fileira só (nome, tipo, url,
+       componentes, logo), então vira um mini-card com os campos em grade. */
+    .lista-status { display: flex; flex-direction: column; gap: .75rem; }
+    .linha-status {
+      display: grid;
+      grid-template-columns: auto 1fr 1fr auto;
+      gap: .5rem;
+      align-items: center;
+      padding: .75rem;
+      border-radius: .75rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .linha-status input,
+    .linha-status select {
+      padding: .55rem .8rem;
+      border-radius: .6rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: .95rem;
+      min-width: 0;
+    }
+    /* A url é o campo mais longo: ocupa a fileira inteira sob os outros. */
+    .linha-status .status-url { grid-column: 2 / -1; font-family: ui-monospace, monospace; font-size: .85rem; }
+    .linha-status .status-componentes { grid-column: 2 / -1; }
+    .linha-status .btn-remover {
+      padding: .5rem .7rem;
+      border-radius: .6rem;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-dim);
+      cursor: pointer;
+      line-height: 1;
+    }
+    .linha-status .btn-remover:hover { color: var(--danger, #ef4444); }
+
+    /* Botão-logo: mostra a imagem escolhida ou as iniciais do serviço. O input
+       de arquivo fica escondido dentro do label (clique no quadrado = escolher). */
+    .status-logo {
+      position: relative;
+      width: 3rem;
+      height: 3rem;
+      border-radius: .6rem;
+      border: 1px dashed var(--border);
+      background: var(--surface);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      overflow: hidden;
+      flex: 0 0 auto;
+    }
+    .status-logo:hover { border-color: var(--success); }
+    .status-logo img { width: 100%; height: 100%; object-fit: contain; }
+    .status-logo input[type="file"] { display: none; }
+    .status-logo__vazio {
+      font-size: .7rem;
+      color: var(--text-dim);
+      text-align: center;
+      line-height: 1.1;
+      padding: .2rem;
+    }
+    /* Aparece sobre a logo só quando há uma imagem, para poder removê-la. */
+    .status-logo__limpar {
+      position: absolute;
+      top: 0; right: 0;
+      width: 1.1rem; height: 1.1rem;
+      border: none;
+      border-radius: 0 0 0 .4rem;
+      background: rgba(0, 0, 0, .55);
+      color: #fff;
+      font-size: .7rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    @media (max-width: 900px) {
+      .linha-status { grid-template-columns: auto 1fr auto; }
+      .linha-status .status-url,
+      .linha-status .status-componentes { grid-column: 1 / -1; }
+    }
+
     /* ===== Manutenção ===== */
     /* A chave do sistema inteiro é a ação mais drástica da tela (apaga o
        dashboard para todo mundo), então ganha destaque e, quando ligada,
@@ -301,6 +385,25 @@
         <button type="button" id="btn-add-token">+ Adicionar serviço</button>
         <button type="button" id="btn-salvar-tokens">Salvar</button>
         <span id="tokens-status" class="tokens-status"></span>
+      </div>
+    </div>
+
+    <div class="card-cfg rounded p-4 mb-6">
+      <h2 class="font-bold mb-1">Serviços da tela "Status Externo"</h2>
+      <p class="text-sm mb-4" style="color: var(--text-dim);">
+        Cada linha vira um card na tela Status Externo. O <strong>tipo</strong> diz como ler a página
+        de status do fornecedor: <strong>Statuspage</strong> (termina em <code>/api/v2/summary.json</code> —
+        Claude, OpenAI, GitHub, Cloudflare), <strong>Instatus</strong> (a página em si, ex.: Railway)
+        ou <strong>RSS</strong> (feed de incidentes, ex.: Azure).
+        Em <strong>componentes</strong>, separados por vírgula, você limita o card a uma parte do serviço
+        (ex.: <code>Claude Code</code>) — deixe em branco para o status geral.
+      </p>
+      <div id="lista-status" class="lista-status"></div>
+      <div class="acoes-tokens">
+        <button type="button" id="btn-add-status">+ Adicionar serviço</button>
+        <button type="button" id="btn-salvar-status">Salvar</button>
+        <button type="button" id="btn-restaurar-status">Restaurar padrão</button>
+        <span id="status-externo-status" class="tokens-status"></span>
       </div>
     </div>
 

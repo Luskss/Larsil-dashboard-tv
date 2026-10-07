@@ -8,6 +8,8 @@
 // Os fetches são no servidor porque o CSP da página só permite
 // connect-src 'self'.
 
+import { agendar, obterParte, mudou, esquecer } from "./agenda.js";
+
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do clima
 
 const FORMATO_REAL = new Intl.NumberFormat("pt-BR", {
@@ -21,15 +23,15 @@ const FORMATO_PERCENTUAL = new Intl.NumberFormat("pt-BR", {
   maximumFractionDigits: 2,
 });
 
+// As seis cotações saem numa só requisição (obterParte junta os pedidos). A
+// rota "/api/dolar" é a parte "dolar" do painel agregado.
 async function buscar(rota) {
-  const resp = await fetch(rota);
-  const dados = await resp.json();
-  if (!resp.ok) {
-    // "detalhe" é o motivo cru vindo da API externa — vale no console para
-    // diagnosticar sem precisar do log do servidor.
-    throw new Error([dados.erro || `Falha em ${rota}`, dados.detalhe].filter(Boolean).join(" — "));
+  try {
+    return await obterParte(rota.replace("/api/", ""));
+  } catch (erro) {
+    // obterParte rejeita com o texto do servidor (ou o Error de rede).
+    throw erro instanceof Error ? erro : new Error(erro || `Falha em ${rota}`);
   }
-  return dados;
 }
 
 async function atualizarDolar() {
@@ -38,6 +40,7 @@ async function atualizarDolar() {
 
   try {
     const dados = await buscar("/api/dolar");
+    if (!mudou("dolar", dados)) return;
     elValor.textContent = FORMATO_REAL.format(dados.valor);
 
     // Seta + sinal deixam a variação legível de longe sem depender da cor.
@@ -47,6 +50,7 @@ async function atualizarDolar() {
     elVariacao.classList.toggle("cotacao__extra--alta", alta);
     elVariacao.classList.toggle("cotacao__extra--baixa", !alta);
   } catch (erro) {
+    esquecer("dolar");
     console.error("Dólar:", erro.message);
     elValor.textContent = "R$ --,--";
     elVariacao.textContent = "—";
@@ -72,12 +76,14 @@ async function atualizarCepea(prefixo, rota, rotuloPadrao) {
 
   try {
     const dados = await buscar(rota);
+    if (!mudou(`cepea-${prefixo}`, dados)) return;
     elValor.textContent = FORMATO_REAL.format(dados.valor);
     elNome.textContent = dados.produto || rotuloPadrao;
     elUnidade.textContent = unidadeCurta(dados.unidade);
     // Só dia/mês: o indicador é diário e o ano não cabe (nem ajuda na TV).
     elData.textContent = (dados.data || "").slice(0, 5) || "—";
   } catch (erro) {
+    esquecer(`cepea-${prefixo}`);
     console.error(`${rotuloPadrao}:`, erro.message);
     elValor.textContent = "R$ --,--";
     elUnidade.textContent = "";
@@ -92,8 +98,10 @@ async function atualizarSelic() {
 
   try {
     const dados = await buscar("/api/selic");
+    if (!mudou("selic", dados)) return;
     elValor.textContent = `${FORMATO_PERCENTUAL.format(dados.valor)}%`;
   } catch (erro) {
+    esquecer("selic");
     console.error("Selic:", erro.message);
     elValor.textContent = "--,--%";
   }
@@ -116,9 +124,11 @@ async function atualizarIgpm() {
 
   try {
     const dados = await buscar("/api/igpm");
+    if (!mudou("igpm", dados)) return;
     elValor.textContent = `${FORMATO_PERCENTUAL.format(dados.valor)}%`;
     elData.textContent = mesCurto(dados.data);
   } catch (erro) {
+    esquecer("igpm");
     console.error("IGP-M:", erro.message);
     elValor.textContent = "--,--%";
     elData.textContent = "—";
@@ -134,5 +144,4 @@ function atualizar() {
   atualizarIgpm();
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("cotacoes", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-dashboard" });

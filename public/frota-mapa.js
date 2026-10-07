@@ -21,6 +21,7 @@
 
 import { consultarFrotaLocalizacao } from "./downdetector.js";
 import { escapar } from "./escape.js";
+import { agendar, mudou, esquecer } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo do restante
 
@@ -760,6 +761,12 @@ async function atualizar() {
   try {
     await garantirMapa();
     const dados = await consultarFrotaLocalizacao();
+    // Mesma localização de antes: redesenhar os pinos reanimaria a abertura do
+    // mapa (giro + zoom) sem nada de novo para mostrar.
+    if (!mudou("mapa", dados)) {
+      mostrarAviso(pontosAtuais.length ? "" : "Nenhuma máquina com localização registrada.");
+      return;
+    }
     pontosAtuais = dados.pontos || [];
     mostrarAviso("");
 
@@ -787,6 +794,7 @@ async function atualizar() {
       animarAbertura();
     }
   } catch (erro) {
+    esquecer("mapa");
     mostrarAviso(typeof erro === "string" ? erro : "Erro ao carregar a localização da frota.");
   }
 }
@@ -818,5 +826,4 @@ new MutationObserver(() => {
   }
 }).observe(vista, { attributes: true, attributeFilter: ["class"] });
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("mapa", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-mapa" });

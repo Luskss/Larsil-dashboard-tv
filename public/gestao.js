@@ -9,7 +9,14 @@ import {
   carregarManutencao,
   salvarManutencao,
 } from "./paginacao.js";
-import { getConfig, setConfig, listarRailwayTokens, salvarRailwayTokens } from "./downdetector.js";
+import {
+  getConfig,
+  setConfig,
+  listarRailwayTokens,
+  salvarRailwayTokens,
+  listarStatusExterno,
+  salvarStatusExterno,
+} from "./downdetector.js";
 import { escapar } from "./escape.js";
 
 // Sem montarPaginacao(): esta página fica sempre fora da navegação/transição
@@ -249,6 +256,193 @@ document.querySelector("#btn-salvar-tokens").addEventListener("click", async () 
     statusTokens.textContent = "Serviços salvos.";
   } catch {
     statusTokens.textContent = "Erro ao salvar os serviços.";
+  }
+});
+
+// ===== Serviços da tela "Status Externo" =====
+// Lista inteira editável: { id, nome, tipo, url, site, componentes[], logo }.
+// Como não há segredo aqui (ao contrário dos tokens), tudo vai e volta junto.
+const listaStatus = document.querySelector("#lista-status");
+const statusStatusExterno = document.querySelector("#status-externo-status");
+let servicosStatus = [];
+
+const TIPOS_STATUS = [
+  ["statuspage", "Statuspage (summary.json)"],
+  ["instatus", "Instatus (página)"],
+  ["rss", "RSS (feed)"],
+];
+
+// A logo é lida no navegador e vai junto no JSON como data URI — mesmo formato
+// das logos de /api/servicos. 1 MB é o teto do servidor (LOGO_MAX lá).
+const LOGO_MAX_ARQUIVO = 1_000_000;
+
+function servicoVazio() {
+  return { id: novoId(), nome: "", tipo: "statuspage", url: "", site: "", componentes: [], logo: null };
+}
+
+// Iniciais para o quadrado da logo enquanto não há imagem (ex.: "Claude Code"
+// vira "CC"), só para a linha não ficar com um buraco cinza.
+function iniciais(nome) {
+  const palavras = String(nome || "").trim().split(/\s+/).filter(Boolean);
+  if (palavras.length === 0) return "logo";
+  return palavras.slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+}
+
+function renderizarStatusExterno() {
+  // Tudo que aparece aqui foi digitado por alguém — escapa antes do HTML.
+  listaStatus.innerHTML = servicosStatus.map((s) => `
+    <div class="linha-status" data-id="${escapar(s.id)}">
+      <label class="status-logo" title="Escolher logo">
+        ${s.logo
+          ? `<img src="${escapar(s.logo)}" alt="">
+             <button type="button" class="status-logo__limpar" title="Remover logo">✕</button>`
+          : `<span class="status-logo__vazio">${escapar(iniciais(s.nome))}</span>`}
+        <input type="file" class="status-logo-input" accept="image/png,image/jpeg,image/gif,image/webp">
+      </label>
+      <input class="status-nome" type="text" placeholder="Nome (ex.: Claude Code)"
+             value="${escapar(s.nome || "")}">
+      <select class="status-tipo">
+        ${TIPOS_STATUS.map(([valor, rotulo]) =>
+          `<option value="${valor}" ${s.tipo === valor ? "selected" : ""}>${escapar(rotulo)}</option>`
+        ).join("")}
+      </select>
+      <button type="button" class="btn-remover" title="Remover">✕</button>
+      <input class="status-url" type="url" placeholder="https://status.exemplo.com/api/v2/summary.json"
+             value="${escapar(s.url || "")}">
+      <input class="status-componentes" type="text"
+             placeholder="Componentes, separados por vírgula (em branco = status geral)"
+             value="${escapar((s.componentes || []).join(", "))}">
+    </div>
+  `).join("");
+}
+
+// Lê o DOM de volta para o array. A logo não está no DOM como valor editável
+// (vive só no array), então é preservada pelo id.
+function lerLinhasParaStatus() {
+  const porId = new Map(servicosStatus.map((s) => [s.id, s]));
+  servicosStatus = [...listaStatus.querySelectorAll(".linha-status")].map((linha) => {
+    const id = linha.dataset.id;
+    const anterior = porId.get(id) || {};
+    return {
+      ...anterior,
+      id,
+      nome: linha.querySelector(".status-nome").value.trim(),
+      tipo: linha.querySelector(".status-tipo").value,
+      url: linha.querySelector(".status-url").value.trim(),
+      componentes: linha.querySelector(".status-componentes").value
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean),
+    };
+  });
+}
+
+function carregarStatusExterno() {
+  return listarStatusExterno().then(({ servicos, usandoPadrao }) => {
+    servicosStatus = (servicos || []).map((s) => ({ ...s, componentes: s.componentes || [] }));
+    if (servicosStatus.length === 0) servicosStatus.push(servicoVazio());
+    renderizarStatusExterno();
+    if (usandoPadrao) {
+      statusStatusExterno.textContent = "Mostrando a lista padrão — salve para personalizar.";
+    }
+  }).catch(() => {
+    statusStatusExterno.textContent = "Erro ao carregar os serviços.";
+  });
+}
+
+carregarStatusExterno();
+
+document.querySelector("#btn-add-status").addEventListener("click", () => {
+  lerLinhasParaStatus();
+  servicosStatus.push(servicoVazio());
+  renderizarStatusExterno();
+  statusStatusExterno.textContent = "Alterações não salvas.";
+});
+
+listaStatus.addEventListener("click", (ev) => {
+  const linha = ev.target.closest(".linha-status");
+  if (!linha) return;
+
+  if (ev.target.closest(".status-logo__limpar")) {
+    // Dentro de um <label>: sem isto o clique abriria o seletor de arquivo que
+    // acabamos de esvaziar.
+    ev.preventDefault();
+    lerLinhasParaStatus();
+    const servico = servicosStatus.find((s) => s.id === linha.dataset.id);
+    if (servico) servico.logo = null;
+    renderizarStatusExterno();
+    statusStatusExterno.textContent = "Alterações não salvas.";
+    return;
+  }
+
+  if (ev.target.closest(".btn-remover")) {
+    lerLinhasParaStatus();
+    servicosStatus = servicosStatus.filter((s) => s.id !== linha.dataset.id);
+    if (servicosStatus.length === 0) servicosStatus.push(servicoVazio());
+    renderizarStatusExterno();
+    statusStatusExterno.textContent = "Alterações não salvas.";
+  }
+});
+
+listaStatus.addEventListener("input", () => {
+  statusStatusExterno.textContent = "Alterações não salvas.";
+});
+
+listaStatus.addEventListener("change", (ev) => {
+  const input = ev.target.closest(".status-logo-input");
+  if (!input) return;
+  const arquivo = input.files?.[0];
+  if (!arquivo) return;
+
+  if (arquivo.size > LOGO_MAX_ARQUIVO) {
+    statusStatusExterno.textContent = "Logo grande demais (máx. 1 MB).";
+    input.value = "";
+    return;
+  }
+
+  const id = input.closest(".linha-status").dataset.id;
+  const leitor = new FileReader();
+  leitor.onload = () => {
+    // Preserva o que está digitado nas outras linhas antes de re-renderizar.
+    lerLinhasParaStatus();
+    const servico = servicosStatus.find((s) => s.id === id);
+    if (servico) servico.logo = String(leitor.result);
+    renderizarStatusExterno();
+    statusStatusExterno.textContent = "Alterações não salvas.";
+  };
+  leitor.onerror = () => {
+    statusStatusExterno.textContent = "Erro ao ler a imagem.";
+  };
+  leitor.readAsDataURL(arquivo);
+});
+
+document.querySelector("#btn-salvar-status").addEventListener("click", async () => {
+  lerLinhasParaStatus();
+  // O servidor descarta linha sem nome ou sem url; avisar aqui evita a surpresa
+  // de salvar e ver a linha sumir sem explicação.
+  const incompletas = servicosStatus.filter((s) => !s.nome || !s.url).length;
+  statusStatusExterno.textContent = "Salvando...";
+  try {
+    await salvarStatusExterno(servicosStatus);
+    await carregarStatusExterno();
+    statusStatusExterno.textContent = incompletas > 0
+      ? `Salvo — ${incompletas} linha(s) sem nome ou endereço foram descartadas.`
+      : "Serviços salvos — a tela atualiza em até 5 min.";
+  } catch {
+    statusStatusExterno.textContent = "Erro ao salvar os serviços.";
+  }
+});
+
+// Salvar uma lista vazia faz o servidor voltar a usar STATUS_EXTERNO_PADRAO.
+document.querySelector("#btn-restaurar-status").addEventListener("click", async () => {
+  if (!confirm("Restaurar a lista padrão? Os serviços e logos configurados aqui serão perdidos.")) return;
+  statusStatusExterno.textContent = "Restaurando...";
+  try {
+    await salvarStatusExterno([]);
+    await carregarStatusExterno();
+    statusStatusExterno.textContent = "Lista padrão restaurada.";
+  } catch {
+    statusStatusExterno.textContent = "Erro ao restaurar a lista.";
   }
 });
 

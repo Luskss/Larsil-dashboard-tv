@@ -12,6 +12,7 @@
 import { aplicarNumeros } from "./animacoes.js";
 import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
+import { agendar, obterParte } from "./agenda.js";
 
 // Mesmo ritmo do Helpdesk (30s, contra 5 min das outras vistas): presença e
 // cronômetro são justamente o que fica errado quando a tela atrasa.
@@ -278,9 +279,7 @@ function desenharResumo(totais) {
 
 async function atualizar() {
   try {
-    const resp = await fetch("/api/tarefas-atuais");
-    const dados = await resp.json();
-    if (!resp.ok) throw dados.erro || "Erro ao carregar as tarefas da equipe.";
+    const dados = await obterParte("tarefas-atuais");
     // Confere o formato antes de desenhar — mesma trava do colaboradores.js:
     // servidor rodando uma versão antiga da rota estouraria lá dentro e o erro
     // apareceria como "erro ao carregar", mandando procurar no banco um
@@ -299,8 +298,7 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("tarefas-atuais", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-tarefas" });
 
 // O carrossel (holofote.js) cuida sozinho de pausar quando a vista sai de cena
 // e retomar quando volta — não há mais cálculo de colunas dependente da

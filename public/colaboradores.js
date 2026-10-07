@@ -7,6 +7,7 @@
 import { aplicarNumeros } from "./animacoes.js";
 import { iniciarHolofote } from "./holofote.js";
 import { escapar } from "./escape.js";
+import { agendar, obterParte } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 5 * 60 * 1000; // mesmo ritmo das outras páginas
 
@@ -123,9 +124,7 @@ function desenharTotal(total) {
 
 async function atualizar() {
   try {
-    const resp = await fetch("/api/colaboradores");
-    const dados = await resp.json();
-    if (!resp.ok) throw dados.erro || "Erro ao carregar os dados de colaboradores.";
+    const dados = await obterParte("colaboradores");
     // Confere o formato antes de desenhar. Sem isto, uma resposta fora do
     // contrato — o caso real: servidor ainda rodando a versão da rota que
     // devolvia `funcoes` — estourava lá dentro e caía no catch como "erro ao
@@ -145,5 +144,4 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("colaboradores", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-colaboradores" });

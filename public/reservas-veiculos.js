@@ -7,6 +7,7 @@
 import { consultarVeiculosReservas } from "./downdetector.js";
 import { aplicarNumeros } from "./animacoes.js";
 import { escapar } from "./escape.js";
+import { agendar } from "./agenda.js";
 
 // Ritmo mais curto que o das telas de frota (5 min): aqui o que muda é o
 // relógio — um carro que sai às 08h tem que virar "em uso" logo em seguida.
@@ -254,5 +255,4 @@ async function atualizar() {
   }
 }
 
-atualizar();
-setInterval(atualizar, INTERVALO_ATUALIZACAO_MS);
+agendar("reservas", atualizar, { intervalo: INTERVALO_ATUALIZACAO_MS, vista: "vista-reservas" });
