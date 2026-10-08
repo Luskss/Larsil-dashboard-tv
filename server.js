@@ -39,6 +39,7 @@ import { randomUUID } from "node:crypto";
 import sql from "mssql";
 import * as store from "./store.js";
 import { validarLogin, iniciarSessao, encerrarSessao, exigirSessao } from "./auth.js";
+import { identificarSistema } from "./sistemas-sql.js";
 
 // Variáveis locais vêm do .env; no Railway vêm do painel (sem arquivo).
 try { process.loadEnvFile(); } catch { /* sem .env, segue com o ambiente */ }
@@ -1040,7 +1041,182 @@ rotaPainel("frota", "/api/frota", async (_req, res) => {
 // vistas, sem Azure Monitor nem credencial nova. Precisa da permissão VIEW
 // DATABASE STATE (o dono do banco já tem).
 const DTU_LIMITE_ALARME = 90;
+const DTU_CAPACIDADE = 50; // plano Standard S2: 50 DTUs = 100% (1% = 0,5 DTU)
 const DTU_CACHE_MS = 15 * 1000; // o alarme não pode esperar os 2 min padrão
+
+// ----- "Quem" está pesando: amostragem das sessões -----
+// O banco não guarda quem fez o quê no passado, e um pico dura segundos — olhar
+// as sessões só na hora em que alguém abre a tela já não mostra nada. Então a
+// cada consulta (no máx. a cada 15 s) o servidor lê os contadores ACUMULADOS de
+// sys.dm_exec_sessions e guarda só a diferença desde a leitura anterior,
+// agrupada por login + máquina + programa, numa janela de 1 h. Fica em memória:
+// um deploy zera e a janela volta a encher sozinha (ver `desde` na resposta).
+const QUEM_JANELA_MS = 60 * 60 * 1000;
+const QUEM_TOPO = 10; // a tela mostra quantos couberem (ver azure-dtu.js)
+let sessoesAnteriores = null; // "id|login_time" -> { cpu, reads, writes }
+let quemDesde = null;
+let baldesQuem = []; // [{ t, itens: Map(identidade -> { login, host, programa, cpu, reads, writes }) }]
+
+async function amostrarSessoes(pool) {
+  const { recordset } = await pool.request().query(
+    // A última consulta de cada conexão diz de que SISTEMA ela é: vários rodam
+    // com o mesmo login e o mesmo programa (node-mssql) e só a máquina muda — um
+    // container sem nome, por exemplo —, mas as tabelas que ele consulta o
+    // entregam (ver sistemas-sql.js).
+    `SELECT s.session_id, s.login_time, s.login_name, s.host_name, s.program_name,
+            s.cpu_time, s.reads, s.writes,
+            CASE WHEN s.session_id = @@SPID THEN 1 ELSE 0 END AS eh_esta_leitura,
+            LEFT(t.text, 4000) AS ultimo_sql
+       FROM sys.dm_exec_sessions s
+       LEFT JOIN sys.dm_exec_connections c ON c.session_id = s.session_id
+       OUTER APPLY sys.dm_exec_sql_text(c.most_recent_sql_handle) t
+      WHERE s.is_user_process = 1`
+  );
+
+  const agora = Date.now();
+  const atuais = new Map();
+  const balde = new Map();
+  for (const l of recordset) {
+    const id = `${l.session_id}|${new Date(l.login_time).getTime()}`;
+    // reads/writes são bigint: o driver os devolve como string.
+    const atual = { cpu: Number(l.cpu_time) || 0, reads: Number(l.reads) || 0, writes: Number(l.writes) || 0 };
+    atuais.set(id, atual);
+    if (!sessoesAnteriores) continue; // primeira leitura só marca o ponto de partida
+
+    // Sessão que não existia na leitura anterior nasceu no intervalo: todo o
+    // contador dela é consumo novo. Contadores só sobem; max() protege de reset.
+    const base = sessoesAnteriores.get(id) ?? { cpu: 0, reads: 0, writes: 0 };
+    const d = {
+      cpu: Math.max(0, atual.cpu - base.cpu),
+      reads: Math.max(0, atual.reads - base.reads),
+      writes: Math.max(0, atual.writes - base.writes),
+    };
+    if (d.cpu + d.reads + d.writes === 0) continue;
+
+    const login = String(l.login_name ?? "").trim();
+    const host = String(l.host_name ?? "").trim();
+    const programa = String(l.program_name ?? "").trim();
+    const chave = `${login}|${host}|${programa}`;
+    const item = balde.get(chave) ?? { login, host, programa, cpu: 0, reads: 0, writes: 0, sistemas: {} };
+    item.cpu += d.cpu; item.reads += d.reads; item.writes += d.writes;
+    // A leitura que o próprio monitor faz não diz nada sobre o sistema; "SELECT 1"
+    // de keep-alive também não (identificarSistema devolve null para ele).
+    const sistema = l.eh_esta_leitura ? null : identificarSistema(l.ultimo_sql);
+    if (sistema) item.sistemas[sistema] = (item.sistemas[sistema] ?? 0) + 1;
+    balde.set(chave, item);
+  }
+
+  if (sessoesAnteriores) baldesQuem.push({ t: agora, itens: balde });
+  else quemDesde = new Date(agora).toISOString();
+  sessoesAnteriores = atuais;
+  baldesQuem = baldesQuem.filter((b) => agora - b.t < QUEM_JANELA_MS);
+}
+
+// Parte de cada um no total da janela, em CPU, leitura e escrita. O DTU é o
+// MAIOR entre os recursos, então vale a maior parte dele em qualquer um — e o
+// recurso em que ele mais pesa vai junto. Mas 100% de um recurso que quase não
+// foi usado (3 leituras no total) não pode passar na frente de quem domina a
+// CPU: a ordem multiplica a parte pela utilização média daquele recurso na
+// janela (`pesos`), e o que aparece na tela continua sendo a parte em si.
+function rankear(itens, recursos, pesos = {}) {
+  const totais = Object.fromEntries(recursos.map(([k]) => [k, itens.reduce((s, i) => s + i[k], 0)]));
+  return itens
+    .map((i) => {
+      let melhor = { pct: 0, nota: 0, recurso: recursos[0][1] };
+      for (const [k, rotulo] of recursos) {
+        const pct = totais[k] > 0 ? (i[k] / totais[k]) * 100 : 0;
+        const nota = pct * (pesos[k] ?? 1);
+        if (nota > melhor.nota) melhor = { pct, nota, recurso: rotulo };
+      }
+      // nota = parte (%) x utilização (% do plano): pontos percentuais de DTU que
+      // esse item respondeu, em média, na janela. Em DTUs: x capacidade / 100.
+      const dtu = (melhor.nota / 100) * (DTU_CAPACIDADE / 100);
+      return { ...i, pct: melhor.pct, nota: melhor.nota, recurso: melhor.recurso, dtu };
+    })
+    .filter((i) => i.nota > 0)
+    .sort((a, b) => b.nota - a.nota);
+}
+
+function consumoPorQuem(pesos) {
+  const soma = new Map();
+  for (const b of baldesQuem) {
+    for (const [chave, i] of b.itens) {
+      const s = soma.get(chave) ?? { ...i, cpu: 0, reads: 0, writes: 0, sistemas: {} };
+      s.cpu += i.cpu; s.reads += i.reads; s.writes += i.writes;
+      for (const [nome, n] of Object.entries(i.sistemas)) s.sistemas[nome] = (s.sistemas[nome] ?? 0) + n;
+      soma.set(chave, s);
+    }
+  }
+  return rankear([...soma.values()], [["cpu", "CPU"], ["reads", "Leitura"], ["writes", "Escrita"]], pesos)
+    .slice(0, QUEM_TOPO)
+    .map((i) => ({
+      login: i.login, host: i.host, programa: i.programa,
+      // O sistema que essa máquina mais consultou na janela (null se nenhum casou).
+      sistema: Object.entries(i.sistemas).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
+      dtu: Math.round(i.dtu * 100) / 100, recurso: i.recurso,
+    }));
+}
+
+// ----- "O quê": consultas mais pesadas (Query Store) -----
+// O Query Store guarda por consulta, em janelas de 1 h, quanto ela gastou de
+// CPU, leitura e escrita. Não diz QUEM rodou, mas diz O QUÊ. A janela é a hora
+// atual e a anterior. Muda devagar: cache de 5 min.
+const CONSULTAS_TOPO = 8; // idem
+const CONSULTAS_CACHE_MS = 5 * 60 * 1000;
+
+async function consultasMaisPesadas(pesos) {
+  const pool = await conectarSql();
+  const { recordset } = await pool.request().query(
+    `SELECT TOP 500
+            q.query_id,
+            LEFT(MAX(qt.query_sql_text), 4000) AS texto,
+            SUM(rs.count_executions) AS execs,
+            SUM(rs.avg_cpu_time * rs.count_executions) / 1000.0 AS cpu,
+            SUM(rs.avg_logical_io_reads * rs.count_executions) AS reads,
+            SUM(rs.avg_logical_io_writes * rs.count_executions) AS writes
+       FROM sys.query_store_runtime_stats rs
+       JOIN sys.query_store_runtime_stats_interval i ON i.runtime_stats_interval_id = rs.runtime_stats_interval_id
+       JOIN sys.query_store_plan p ON p.plan_id = rs.plan_id
+       JOIN sys.query_store_query q ON q.query_id = p.query_id
+       JOIN sys.query_store_query_text qt ON qt.query_text_id = q.query_text_id
+      WHERE i.end_time > DATEADD(hour, -1, SYSUTCDATETIME())
+      GROUP BY q.query_id
+      ORDER BY SUM(rs.avg_cpu_time * rs.count_executions) DESC`
+  );
+
+  // Agrupa por sistema (ver sistemas-sql.js): "Gestor de Tarefas" são dezenas de
+  // consultas, e o que interessa é o peso do sistema, não de cada uma. Consulta
+  // que nenhuma regra reconhece fica sozinha, com o próprio SQL.
+  const grupos = new Map();
+  for (const l of recordset) {
+    const completo = String(l.texto ?? "");
+    const sistema = identificarSistema(completo);
+    const chave = sistema ?? `consulta:${l.query_id}`;
+    const cpu = Number(l.cpu) || 0;
+    const g = grupos.get(chave) ?? { sistema, texto: "", maiorCpu: -1, consultas: 0, execs: 0, cpu: 0, reads: 0, writes: 0 };
+    g.consultas += 1;
+    g.execs += Number(l.execs) || 0;
+    g.cpu += cpu;
+    g.reads += Number(l.reads) || 0;
+    g.writes += Number(l.writes) || 0;
+    if (cpu > g.maiorCpu) {
+      g.maiorCpu = cpu;
+      // Tira a lista de parâmetros "(@de date,@f varchar(10))" que o driver põe na
+      // frente (aceita parênteses dentro dela: termina no ")" antes do comando).
+      g.texto = completo
+        .replace(/^\(@.*?\)(?=\s*(?:SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|EXEC|DECLARE|IF|SET)\b)/is, "")
+        .replace(/\s+/g, " ").trim().slice(0, 140);
+    }
+    grupos.set(chave, g);
+  }
+
+  return rankear([...grupos.values()], [["cpu", "CPU"], ["reads", "Leitura"], ["writes", "Escrita"]], pesos)
+    .slice(0, CONSULTAS_TOPO)
+    .map((i) => ({
+      sistema: i.sistema, texto: i.texto, consultas: i.consultas, execs: i.execs,
+      dtu: Math.round(i.dtu * 100) / 100, recurso: i.recurso,
+    }));
+}
 
 rotaPainel("azure-dtu", "/api/azure-dtu", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
@@ -1068,8 +1244,35 @@ rotaPainel("azure-dtu", "/api/azure-dtu", async (_req, res) => {
         ? serie.reduce((soma, p) => soma + p.dtu, 0) / serie.length
         : null;
 
+      // Os dois painéis de "quem/o quê" são um extra: se falharem (permissão,
+      // Query Store desligado), o gráfico e o alarme seguem normalmente.
+      const mediaDe = (campo) => (serie.length ? serie.reduce((s, p) => s + p[campo], 0) / serie.length : 0);
+      // Leitura e escrita pesam no Data IO; a escrita também no Log IO.
+      const pesos = {
+        cpu: Math.max(mediaDe("cpu"), 0.5),
+        reads: Math.max(mediaDe("dataIo"), 0.5),
+        writes: Math.max(mediaDe("dataIo"), mediaDe("logWrite"), 0.5),
+      };
+      let quem = null;
+      try {
+        await amostrarSessoes(pool);
+        quem = consumoPorQuem(pesos);
+      } catch (erro) {
+        console.warn("Amostragem de sessões falhou:", erro.message);
+      }
+      let consultas = null;
+      try {
+        consultas = await comCacheSql("azure-dtu-consultas", () => consultasMaisPesadas(pesos), CONSULTAS_CACHE_MS);
+      } catch (erro) {
+        console.warn("Consulta ao Query Store falhou:", erro.message);
+      }
+
       return {
+        quem,
+        quemDesde,
+        consultas,
         limite: DTU_LIMITE_ALARME,
+        capacidadeDtu: DTU_CAPACIDADE,
         atual: ultimo?.dtu ?? null,
         componentes: ultimo
           ? { cpu: ultimo.cpu, dataIo: ultimo.dataIo, logWrite: ultimo.logWrite }

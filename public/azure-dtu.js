@@ -7,6 +7,7 @@
 // enquanto durar. A atualização roda em segundo plano para o alarme valer mesmo
 // quando a rotação da TV está mostrando outra página.
 
+import { escapar } from "./escape.js";
 import { agendar, obterParte, esquecer, mudou } from "./agenda.js";
 
 const INTERVALO_ATUALIZACAO_MS = 30 * 1000;
@@ -15,6 +16,7 @@ const FOLGA_REARME = 5;              // só sai do alarme abaixo de limite - 5 (
 const PLANO = "S2 · 50 DTUs";
 
 const FORMATO_PCT = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const FORMATO_INTEIRO = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
 const FORMATO_HORA = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
 const $ = (seletor) => document.querySelector(seletor);
@@ -151,6 +153,100 @@ function desenharCards(d) {
     card("Log IO", c.logWrite);
 }
 
+// ===== Quem / o quê mais pesa =====
+// `dtu` é uma estimativa, em DTUs do plano, de quanto cada item respondeu em
+// média na janela (a parte dele no recurso em que mais pesa, vezes a utilização
+// desse recurso). O recurso (CPU, leitura ou escrita) vai ao lado.
+const FORMATO_DTU = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const dtus = (n) => (n > 0 && n < 0.05 ? "<0,1" : FORMATO_DTU.format(n));
+
+// Barra proporcional ao maior da lista; vermelha quando o item sozinho responde
+// por 10% ou mais da capacidade do plano.
+function barra(i, maior, capacidade) {
+  const forte = capacidade && i.dtu / capacidade >= 0.1 ? " dtu-item--forte" : "";
+  const largura = maior > 0 ? Math.min(Math.max((i.dtu / maior) * 100, 3), 100) : 3;
+  return { forte, html: `<div class="dtu-item__barra"><span style="width:${largura}%"></span></div>` };
+}
+
+function itemValor(i) {
+  return `<span class="dtu-item__pct">${escapar(dtus(i.dtu))} DTU<small>${escapar(i.recurso)}</small></span>`;
+}
+
+function itemQuem(i, maior, capacidade) {
+  const b = barra(i, maior, capacidade);
+  // Máquina sem nome (um container, por exemplo) e programa genérico (node-mssql)
+  // não dizem o que ela é: quando o servidor reconhece o sistema pelas tabelas
+  // que ela consulta, esse nome vira o título e programa/login/máquina descem.
+  const origem = [i.sistema ? i.programa : "", i.login, i.host].filter(Boolean).join(" · ");
+  return `
+    <div class="dtu-item${b.forte}">
+      <div class="dtu-item__linha">
+        <span class="dtu-item__nome">${escapar(i.sistema || i.programa || "Programa não informado")}</span>${itemValor(i)}
+      </div>
+      <div class="dtu-item__sub">${escapar(origem)}</div>${b.html}
+    </div>`;
+}
+
+// Com sistema reconhecido (ver sistemas-sql.js) o título é o nome dele e o SQL
+// vira só a pista da consulta mais pesada; sem sistema, o SQL é tudo que há.
+function itemConsulta(i, maior, capacidade) {
+  const b = barra(i, maior, capacidade);
+  const execs = `${FORMATO_INTEIRO.format(i.execs)} execuções`;
+  const detalhe = i.sistema && i.consultas > 1 ? `${FORMATO_INTEIRO.format(i.consultas)} consultas · ${execs}` : execs;
+  return `
+    <div class="dtu-item${b.forte}">
+      <div class="dtu-item__linha">
+        <span class="dtu-item__nome">${escapar(i.sistema || "Sistema não identificado")}</span>${itemValor(i)}
+      </div>
+      <div class="dtu-item__sub">${escapar(detalhe)}</div>${i.sistema ? "" : `<div class="dtu-item__sql">${escapar(i.texto)}</div>`}${b.html}
+    </div>`;
+}
+
+function lista(itens, desenhar, capacidade) {
+  const maior = Math.max(...itens.map((i) => i.dtu), 0);
+  return `<div class="dtu-consumo__lista">${itens.map((i) => desenhar(i, maior, capacidade)).join("")}</div>`;
+}
+
+function desenharConsumo(d) {
+  const cap = d.capacidadeDtu;
+  let html = `<div class="dtu-consumo__titulo">Quem mais pesou · última hora</div>`;
+  if (d.quem == null) {
+    html += `<div class="dtu-consumo__vazio">Indisponível no momento.</div>`;
+  } else if (d.quem.length === 0) {
+    html += `<div class="dtu-consumo__vazio">Coletando… os dados aparecem em instantes.</div>`;
+  } else {
+    html += lista(d.quem, itemQuem, cap);
+  }
+
+  if (d.consultas && d.consultas.length > 0) {
+    html += `<div class="dtu-consumo__titulo">O que mais pesou · sistemas</div>${lista(d.consultas, itemConsulta, cap)}`;
+  }
+
+  if (d.quemDesde) {
+    html += `<div class="dtu-consumo__nota">DTUs: média estimada na hora (plano de ${cap || 50}). Sessões desde ${FORMATO_HORA.format(new Date(d.quemDesde))}; sistemas: hora atual e anterior.</div>`;
+  }
+  const painel = $("#dtu-consumo");
+  painel.innerHTML = html;
+  ajustarConsumo(painel);
+}
+
+// O servidor manda mais itens do que cabem numa tela de TV; aqui sobram só os que
+// couberem, tirando sempre do fim da lista maior (e deixando ao menos MIN_ITENS
+// em cada uma). Painel oculto não tem altura para medir: o ResizeObserver abaixo
+// refaz a conta quando a vista entra.
+const MIN_ITENS = 3;
+function ajustarConsumo(painel) {
+  if (painel.clientHeight === 0) return;
+  const listas = [...painel.querySelectorAll(".dtu-consumo__lista")];
+  while (painel.scrollHeight > painel.clientHeight + 1) {
+    const maior = listas
+      .filter((l) => l.children.length > MIN_ITENS)
+      .sort((a, b) => b.children.length - a.children.length)[0];
+    if (!maior) break;
+    maior.lastElementChild.remove();
+  }
+}
+
 // ===== Gráfico (SVG manual, como os outros gráficos do projeto) =====
 const MARGEM = { esq: 42, dir: 14, topo: 12, base: 26 };
 
@@ -207,6 +303,7 @@ function desenharGrafico(d) {
 }
 
 new ResizeObserver(() => desenharGrafico(ultimoDados)).observe($("#dtu-grafico"));
+new ResizeObserver(() => { if (ultimoDados) desenharConsumo(ultimoDados); }).observe($("#dtu-consumo"));
 
 // ===== Atualização =====
 function mostrarAviso(mensagem) {
@@ -232,6 +329,7 @@ async function atualizar() {
 
     if (mudou("azure-dtu", dados, ["consultadoEm"])) {
       desenharCards(dados);
+      desenharConsumo(dados);
       desenharGrafico(dados);
     }
   } catch (erro) {

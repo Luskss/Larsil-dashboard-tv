@@ -2219,7 +2219,18 @@
     @keyframes dtu-pulsa { 50% { filter: brightness(1.25); } }
     @media (prefers-reduced-motion: reduce) { .dtu-alarme { animation: none; } }
 
-    .dtu-cards { display: grid; grid-template-columns: 1.4fr repeat(5, 1fr); gap: 1rem; margin-bottom: 1rem; }
+    /* Duas colunas: cards + gráfico à esquerda, "quem mais pesa" à direita. */
+    .dtu-corpo {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(18rem, 24vw, 26rem);
+      grid-template-rows: minmax(0, 1fr); /* a linha tem a altura da tela, não a do conteúdo */
+      gap: 1rem;
+    }
+    .dtu-corpo__principal { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .dtu-cards { display: grid; grid-template-columns: 1.4fr repeat(5, 1fr); gap: .75rem; margin-bottom: 1rem; }
+    .dtu-cards .dtu-card { padding: .6rem .75rem; }
     .dtu-card {
       --cor: var(--success);
       background: var(--surface);
@@ -2261,6 +2272,63 @@
     .dtu-grafico__ponto { fill: #6f86f0; }
     .dtu-grafico__ponto--critico { fill: var(--critical); }
     .dtu-grafico__vazio { margin: auto; color: var(--text-dim); }
+
+    /* Painel "quem mais pesa": linhas com barra proporcional à parte de cada um. */
+    .dtu-consumo {
+      min-height: 0;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: .6rem .85rem;
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+    }
+    .dtu-consumo__titulo {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .dtu-consumo__titulo + .dtu-consumo__lista { margin-bottom: .25rem; }
+    .dtu-consumo__lista { display: flex; flex-direction: column; gap: .4rem; }
+    .dtu-item { min-width: 0; }
+    .dtu-item__linha { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+    .dtu-item__nome {
+      font-size: .9rem;
+      font-weight: 700;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dtu-item__pct { font-size: .9rem; font-weight: 800; flex: 0 0 auto; }
+    .dtu-item__pct small { font-size: .65rem; font-weight: 600; color: var(--text-dim); margin-left: .25rem; }
+    .dtu-item__sub {
+      font-size: .72rem;
+      color: var(--text-dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dtu-item__sql {
+      font-size: .7rem;
+      color: var(--text-dim);
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+      overflow: hidden;
+    }
+    .dtu-item__barra { height: 4px; margin-top: .15rem; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+    .dtu-item__barra > span { display: block; height: 100%; border-radius: inherit; background: #6f86f0; }
+    .dtu-item--forte .dtu-item__barra > span { background: var(--critical); }
+    .dtu-consumo__vazio { font-size: .85rem; color: var(--text-dim); }
+    .dtu-consumo__nota { margin-top: auto; font-size: .72rem; color: var(--text-dim); }
 
     /* ===== Vista Helpdesk: três colunas kanban; o excesso de cards rola
        DENTRO da coluna — a página em si nunca rola. ===== */
@@ -3561,8 +3629,14 @@
     </div>
     <div id="dtu-aviso" class="dtu-aviso" role="alert"></div>
 
-    <div id="dtu-cards" class="dtu-cards"></div>
-    <div id="dtu-grafico" class="dtu-grafico"></div>
+    <div class="dtu-corpo">
+      <div class="dtu-corpo__principal">
+        <div id="dtu-cards" class="dtu-cards"></div>
+        <div id="dtu-grafico" class="dtu-grafico"></div>
+      </div>
+      <!-- Quem/o quê mais pesa (preenchido pelo azure-dtu.js) -->
+      <aside id="dtu-consumo" class="dtu-consumo" aria-label="Quem mais consome"></aside>
+    </div>
   </section>
 
   <!-- Toast de novos chamados no helpdesk -->
