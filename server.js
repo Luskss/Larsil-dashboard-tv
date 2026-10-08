@@ -29,6 +29,7 @@
 //   GET  /api/veiculos-reservas  -> reservas dos carros (dbo.VEICULOS_RESERVAS_TESTE x dbo.VEICULOS_TESTE)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
 //   GET  /api/status-externo     -> status de Claude, ChatGPT, Railway e Azure (páginas oficiais)
+//   GET  /api/azure-dtu          -> uso de DTU do Azure SQL na última hora (sys.dm_db_resource_stats)
 
 import express from "express";
 import compression from "compression";
@@ -324,8 +325,9 @@ app.post("/api/servicos", async (req, res) => {
 // ===== Config chave-valor =====
 // Lista branca: a chave vira nome de propriedade no data.json, e chave livre
 // deixaria qualquer um encher o arquivo (ou escrever "__proto__"). Hoje só a
-// cidade do clima passa por aqui; o resto das preferências é localStorage.
-const CONFIGS_PERMITIDAS = new Set(["cidade"]);
+// cidade do clima e o som do alarme de DTU ("0" = desligado) passam por aqui; o
+// resto das preferências é localStorage.
+const CONFIGS_PERMITIDAS = new Set(["cidade", "dtu-som"]);
 const CONFIG_VALOR_MAX = 200;
 
 app.get("/api/config/:chave", async (req, res) => {
@@ -1028,6 +1030,63 @@ rotaPainel("frota", "/api/frota", async (_req, res) => {
   } catch (erro) {
     console.error("Erro ao consultar a frota:", erro.message);
     res.status(502).json({ erro: "Erro ao consultar o banco da frota" });
+  }
+});
+
+// ===== Uso do Azure SQL (DTU) =====
+// O "DTU percentage" do portal Azure é o maior entre CPU, Data IO e Log IO. O
+// próprio banco guarda isso em sys.dm_db_resource_stats (uma amostra a cada 15 s,
+// cerca de 1 h de histórico), então dá para ler pela mesma conexão das outras
+// vistas, sem Azure Monitor nem credencial nova. Precisa da permissão VIEW
+// DATABASE STATE (o dono do banco já tem).
+const DTU_LIMITE_ALARME = 90;
+const DTU_CACHE_MS = 15 * 1000; // o alarme não pode esperar os 2 min padrão
+
+rotaPainel("azure-dtu", "/api/azure-dtu", async (_req, res) => {
+  if (!process.env.DB_SERVER || !process.env.DB_USER) {
+    return res.status(503).json({ erro: "Banco de dados não configurado — preencha o .env" });
+  }
+
+  try {
+    const dados = await comCacheSql("azure-dtu", async () => {
+      const pool = await conectarSql();
+      const { recordset } = await pool.request().query(
+        `SELECT end_time, avg_cpu_percent, avg_data_io_percent, avg_log_write_percent
+           FROM sys.dm_db_resource_stats
+          ORDER BY end_time`
+      );
+
+      const serie = recordset.map((l) => ({
+        em: new Date(l.end_time).toISOString(), // end_time é UTC
+        cpu: Number(l.avg_cpu_percent) || 0,
+        dataIo: Number(l.avg_data_io_percent) || 0,
+        logWrite: Number(l.avg_log_write_percent) || 0,
+      })).map((p) => ({ ...p, dtu: Math.max(p.cpu, p.dataIo, p.logWrite) }));
+
+      const ultimo = serie.at(-1) ?? null;
+      const media = serie.length
+        ? serie.reduce((soma, p) => soma + p.dtu, 0) / serie.length
+        : null;
+
+      return {
+        limite: DTU_LIMITE_ALARME,
+        atual: ultimo?.dtu ?? null,
+        componentes: ultimo
+          ? { cpu: ultimo.cpu, dataIo: ultimo.dataIo, logWrite: ultimo.logWrite }
+          : null,
+        pico: serie.length ? Math.max(...serie.map((p) => p.dtu)) : null,
+        media,
+        serie: serie.map((p) => ({ em: p.em, dtu: p.dtu })),
+        consultadoEm: new Date().toISOString(),
+      };
+    }, DTU_CACHE_MS);
+    // Fora do cache SQL: ligar/desligar o som na Gestão vale já na próxima
+    // atualização da TV, sem esperar os 15 s.
+    const somLigado = (await store.getConfig("dtu-som")) !== "0";
+    res.json({ ...dados, somLigado });
+  } catch (erro) {
+    console.error("Erro ao consultar o uso do Azure SQL:", erro.message);
+    res.status(502).json({ erro: "Erro ao consultar o uso do Azure SQL (permissão VIEW DATABASE STATE?)" });
   }
 });
 

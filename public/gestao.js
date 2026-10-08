@@ -166,6 +166,32 @@ document.querySelector("#form-cidade").addEventListener("submit", async (ev) => 
   }
 });
 
+// ===== Som do alarme de DTU =====
+// Salva a cada clique (ao contrário da manutenção): desligar o som não tira nada
+// do ar. "0" = desligado; sem valor salvo o som vale ligado.
+const chaveDtuSom = document.querySelector("#dtu-som");
+const statusDtuSom = document.querySelector("#dtu-som-status");
+const textoDtuSom = (ligado) => (ligado ? "Ligado — o alarme toca acima de 90%." : "Desligado — só a faixa vermelha aparece.");
+
+getConfig("dtu-som").then((valor) => {
+  chaveDtuSom.checked = valor !== "0";
+  statusDtuSom.textContent = textoDtuSom(chaveDtuSom.checked);
+}).catch(() => {
+  statusDtuSom.textContent = "Não foi possível carregar a configuração.";
+});
+
+chaveDtuSom.addEventListener("change", async () => {
+  const ligado = chaveDtuSom.checked;
+  statusDtuSom.textContent = "Salvando...";
+  try {
+    await setConfig("dtu-som", ligado ? "1" : "0");
+    statusDtuSom.textContent = textoDtuSom(ligado);
+  } catch {
+    chaveDtuSom.checked = !ligado; // volta ao que está salvo
+    statusDtuSom.textContent = "Erro ao salvar.";
+  }
+});
+
 // ===== Serviços do Railway =====
 // Cada linha guarda { id, rotulo, tokenMascarado, temToken }. O campo de
 // token começa vazio (placeholder mostra o mascarado); só é enviado quando

@@ -2183,6 +2183,85 @@
     }
     .status-externo-aviso--visivel { display: block; }
 
+    /* ===== Vista Azure SQL / DTU: faixa de alarme, cards e gráfico de linha ===== */
+    .dtu-topo { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+    .dtu-rodape { font-size: .85rem; color: var(--text-dim); }
+    .dtu-aviso {
+      margin-top: .5rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      font-size: .9rem;
+      display: none;
+    }
+    .dtu-aviso--visivel { display: block; }
+
+    /* Faixa vermelha: só existe enquanto o DTU está no limite — de longe, é o
+       que chama o olho antes de qualquer número. */
+    .dtu-alarme {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: .75rem;
+      padding: .9rem 1.25rem;
+      border-radius: .9rem;
+      background: var(--critical);
+      color: #fff;
+      font-size: clamp(1.1rem, 2.6vh, 1.8rem);
+      font-weight: 800;
+      animation: dtu-pulsa 1.2s ease-in-out infinite;
+    }
+    .dtu-alarme--visivel { display: flex; }
+    .dtu-alarme__dica { font-size: .85rem; font-weight: 600; opacity: .9; }
+    @keyframes dtu-pulsa { 50% { filter: brightness(1.25); } }
+    @media (prefers-reduced-motion: reduce) { .dtu-alarme { animation: none; } }
+
+    .dtu-cards { display: grid; grid-template-columns: 1.4fr repeat(5, 1fr); gap: 1rem; margin-bottom: 1rem; }
+    .dtu-card {
+      --cor: var(--success);
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: 1rem;
+      padding: .75rem 1rem;
+      min-width: 0;
+    }
+    .dtu-card--grande { border-color: var(--cor); }
+    .dtu-card--ok { --cor: var(--success); }
+    .dtu-card--atencao { --cor: var(--alert); }
+    .dtu-card--critico { --cor: var(--critical); }
+    .dtu-card__rotulo {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .dtu-card__valor { font-size: clamp(1.4rem, 3.4vh, 2.4rem); font-weight: 800; line-height: 1.1; }
+    .dtu-card--grande .dtu-card__valor { font-size: clamp(2.2rem, 7vh, 4.5rem); color: var(--cor); }
+
+    .dtu-grafico {
+      flex: 1;
+      min-height: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: .75rem 1rem;
+      display: flex;
+      flex-direction: column;
+    }
+    .dtu-grafico__titulo { font-size: .9rem; font-weight: 700; color: var(--text-dim); margin-bottom: .25rem; }
+    .dtu-grafico svg { flex: 1; min-height: 0; width: 100%; }
+    .dtu-grafico__eixo { fill: var(--text-dim); font-size: 11px; }
+    .dtu-grafico__grade { stroke: var(--border); stroke-width: 1; }
+    .dtu-grafico__limite { stroke: var(--critical); stroke-width: 1.5; stroke-dasharray: 6 4; }
+    .dtu-grafico__linha { fill: none; stroke: #6f86f0; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+    .dtu-grafico__ponto { fill: #6f86f0; }
+    .dtu-grafico__ponto--critico { fill: var(--critical); }
+    .dtu-grafico__vazio { margin: auto; color: var(--text-dim); }
+
     /* ===== Vista Helpdesk: três colunas kanban; o excesso de cards rola
        DENTRO da coluna — a página em si nunca rola. ===== */
     .colunas {
@@ -2947,6 +3026,9 @@
       pointer-events: none;
     }
     .toast-novos--visivel { transform: translateY(0); opacity: 1; }
+    /* Toast do alarme de DTU: um degrau acima do de chamados, para os dois
+       não se sobreporem se aparecerem juntos. */
+    .toast-novos--dtu { bottom: calc(5.5rem + var(--margem-tv, 0px)); }
     /* O pulso é um halo em ::after (transform + opacity, só compositor) e não
        um box-shadow animado, que repinta a cada quadro. E só roda com o toast
        na tela: escondido ele fica apenas deslocado por transform, continua
@@ -3466,10 +3548,33 @@
     <div id="status-externo-cards" class="status-externo-grid mt-3"></div>
   </section>
 
+  <!-- ===== Vista Azure SQL / DTU (uso do banco + alarme sonoro) ===== -->
+  <section id="vista-azure-dtu" class="vista w-full max-w-[1600px] mx-auto px-6 pt-6 pb-0">
+    <div class="dtu-topo">
+      <h1 class="text-3xl font-extrabold tracking-wide uppercase">Azure SQL · DTU</h1>
+      <span id="dtu-rodape" class="dtu-rodape"></span>
+    </div>
+
+    <div id="dtu-alarme" class="dtu-alarme" role="alert">
+      <span id="dtu-alarme-texto"></span>
+      <span id="dtu-alarme-dica" class="dtu-alarme__dica"></span>
+    </div>
+    <div id="dtu-aviso" class="dtu-aviso" role="alert"></div>
+
+    <div id="dtu-cards" class="dtu-cards"></div>
+    <div id="dtu-grafico" class="dtu-grafico"></div>
+  </section>
+
   <!-- Toast de novos chamados no helpdesk -->
   <div id="toast-novos" class="toast-novos" role="status" aria-live="polite">
     <span class="toast-novos__bolinha"></span>
     <span id="toast-novos-texto"></span>
+  </div>
+
+  <!-- Toast do alarme de DTU (azure-dtu.js) -->
+  <div id="toast-dtu" class="toast-novos toast-novos--dtu" role="alert">
+    <span class="toast-novos__bolinha"></span>
+    <span id="toast-dtu-texto"></span>
   </div>
 
   <div id="donut-tooltip" class="donut-tooltip" aria-hidden="true"></div>
@@ -3487,6 +3592,7 @@
   <script src="./reservas-veiculos.js" type="module"></script>
   <script src="./railway-status.js" type="module"></script>
   <script src="./status-servicos.js" type="module"></script>
+  <script src="./azure-dtu.js" type="module"></script>
   <script src="./telemetria.js" type="module"></script>
   <script src="./reload-diario.js" type="module"></script>
 </body>

@@ -362,6 +362,22 @@
     </div>
 
     <div class="card-cfg rounded p-4 mb-6">
+      <h2 class="font-bold mb-1">Alarme do Azure SQL (DTU)</h2>
+      <p class="text-sm mb-4" style="color: var(--text-dim);">
+        Quando o uso de DTU do banco passa de 90%, a tela Azure SQL / DTU mostra uma faixa vermelha
+        e toca um bipe a cada 30 segundos. Aqui você liga ou desliga só o <strong>som</strong>;
+        a faixa vermelha continua aparecendo. Vale para todas as telas, que acompanham em até 30 segundos.
+      </p>
+      <label class="chave-manutencao">
+        <input type="checkbox" id="dtu-som">
+        <span>
+          <strong>Som do alarme</strong>
+          <span class="chave-manutencao__dica" id="dtu-som-status">Carregando...</span>
+        </span>
+      </label>
+    </div>
+
+    <div class="card-cfg rounded p-4 mb-6">
       <h2 class="font-bold mb-1">Cidade do clima</h2>
       <p class="text-sm mb-4" style="color: var(--text-dim);">
         Usada pelo widget de clima no Dashboard (temperatura atual e previsão de amanhã).
