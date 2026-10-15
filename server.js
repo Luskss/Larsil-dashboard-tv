@@ -21,10 +21,10 @@
 //   GET  /api/frota-localizacao  -> posição atual da frota por projeto (dbo.TICKET x dbo.FROTA)
 //   GET  /api/frota-lideres      -> qtd de veículos por coordenador (dbo.FROTA x dbo.TICKET)
 //   GET  /api/apontamento        -> última produção apontada por equipe (dbo.ORGANOGRAMA x dbo.BOLETIM_DIARIO x dbo.FOLGAS)
-//   GET  /api/ativos-ti          -> contagem de ativos de TI (SQL Server, inventario.ATIVOS)
+//   GET  /api/ativos-ti          -> painel gráfico de ativos de TI (SQL Server, inventario.ATIVOS)
 //   GET  /api/colaboradores      -> quadro por coordenador, com as classes (SQL Server, dbo.COLABORADORES)
 //   GET  /api/foto/:nome         -> foto do colaborador (proxy para o iam_larsil/PCP)
-//   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, dbo.HELPDESK_CHAMADOS)
+//   GET  /api/helpdesk-chamados  -> chamados recentes por status (SQL Server, helpdesk.CHAMADOS)
 //   GET  /api/tarefas-atuais     -> em que cada pessoa da equipe está trabalhando (schema gestor)
 //   GET  /api/veiculos-reservas  -> reservas dos carros (dbo.VEICULOS_RESERVAS_TESTE x dbo.VEICULOS_TESTE)
 //   GET  /api/railway-status     -> status dos serviços configurados no Railway (API GraphQL)
@@ -1783,9 +1783,13 @@ rotaPainel("apontamento", "/api/apontamento", async (_req, res) => {
 });
 
 // ===== Ativos de TI (SQL Server) =====
-// Contagem por tipo em inventario.ATIVOS. A tela lista só os tipos abaixo
-// (pedido do Lucas); outros tipos que existam na tabela ficam fora por ora.
-const TIPOS_ATIVOS_TI = ["NOTEBOOK", "MONITOR", "CELULAR", "STARLINK"];
+// Painel gráfico sobre inventario.ATIVOS: disponíveis (notebook, celular,
+// starlink), total e % em uso, ativos por tipo, por projeto, por status e
+// compras dos últimos 12 meses. Descartado/perdido nunca entra, e só as
+// categorias de equipamento (DISPOSITIVO, REDE, TELA) contam.
+const ATIVOS_VIVOS =
+  `STATUS NOT IN ('DESCARTADO', 'PERDIDO') AND CATEGORIA IN ('DISPOSITIVO', 'REDE', 'TELA')`;
+const TIPOS_DISPONIVEIS = ["NOTEBOOK", "CELULAR", "STARLINK"];
 
 rotaPainel("ativos-ti", "/api/ativos-ti", async (_req, res) => {
   if (!process.env.DB_SERVER || !process.env.DB_USER) {
@@ -1795,18 +1799,85 @@ rotaPainel("ativos-ti", "/api/ativos-ti", async (_req, res) => {
   try {
     const dados = await comCacheSql("ativos-ti", async () => {
       const pool = await conectarSql();
-      const { recordset } = await pool.request().query(
-        `SELECT [TIPO] AS tipo, COUNT(*) AS qtd
-           FROM inventario.ATIVOS
-          GROUP BY [TIPO]`
-      );
+      const consulta = async (sql) => (await pool.request().query(sql)).recordset;
 
-      const contagem = new Map(
-        recordset.map((l) => [String(l.tipo ?? "").trim().toUpperCase(), l.qtd])
-      );
+      const [disponiveis, totais, porTipo, porProjeto, porStatus, porMes] = await Promise.all([
+        consulta(
+          `SELECT TIPO AS nome, COUNT(*) AS qtd
+             FROM inventario.ATIVOS
+            WHERE STATUS = 'DISPONIVEL'
+              AND CATEGORIA IN ('DISPOSITIVO', 'REDE', 'TELA')
+              AND TIPO IN ('NOTEBOOK', 'CELULAR', 'STARLINK')
+            GROUP BY TIPO`),
+        consulta(
+          `SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN STATUS = 'EM_USO' THEN 1 ELSE 0 END) AS emUso,
+                  CAST(100.0 * SUM(CASE WHEN STATUS = 'EM_USO' THEN 1 ELSE 0 END)
+                       / NULLIF(COUNT(*), 0) AS DECIMAL(5,1)) AS pctEmUso
+             FROM inventario.ATIVOS
+            WHERE ${ATIVOS_VIVOS}`),
+        consulta(
+          `SELECT TIPO AS nome, COUNT(*) AS qtd
+             FROM inventario.ATIVOS
+            WHERE ${ATIVOS_VIVOS}
+            GROUP BY TIPO
+            ORDER BY qtd DESC`),
+        consulta(
+          `SELECT COALESCE(NULLIF(LTRIM(RTRIM(PROJETO)), ''), 'SEM PROJETO') AS nome, COUNT(*) AS qtd
+             FROM inventario.ATIVOS
+            WHERE ${ATIVOS_VIVOS}
+            GROUP BY COALESCE(NULLIF(LTRIM(RTRIM(PROJETO)), ''), 'SEM PROJETO')
+            ORDER BY qtd DESC`),
+        consulta(
+          `SELECT STATUS AS nome, COUNT(*) AS qtd
+             FROM inventario.ATIVOS
+            WHERE ${ATIVOS_VIVOS}
+            GROUP BY STATUS
+            ORDER BY qtd DESC`),
+        consulta(
+          `SELECT DATEFROMPARTS(YEAR(DATA_COMPRA), MONTH(DATA_COMPRA), 1) AS mes, COUNT(*) AS qtd
+             FROM inventario.ATIVOS
+            WHERE ${ATIVOS_VIVOS}
+              AND DATA_COMPRA >= DATEADD(MONTH, -11,
+                    DATEFROMPARTS(YEAR(SYSDATETIMEOFFSET()), MONTH(SYSDATETIMEOFFSET()), 1))
+            GROUP BY DATEFROMPARTS(YEAR(DATA_COMPRA), MONTH(DATA_COMPRA), 1)
+            ORDER BY mes`),
+      ]);
 
+      const norm = (v) => String(v ?? "").trim().toUpperCase();
+      const lista = (linhas) => linhas.map((l) => ({ nome: norm(l.nome), qtd: Number(l.qtd) || 0 }));
+
+      const dispMap = new Map(lista(disponiveis).map((l) => [l.nome, l.qtd]));
+
+      // Sempre 12 pontos (mês sem compra = 0), do mais antigo ao atual, em
+      // horário de Brasília para não virar o mês 3h antes no servidor (UTC).
+      const agora = new Date(Date.now() - 3 * 3600 * 1000);
+      const compras = new Map(
+        porMes.map((l) => {
+          const d = new Date(l.mes);
+          return [`${d.getUTCFullYear()}-${d.getUTCMonth()}`, Number(l.qtd) || 0];
+        })
+      );
+      const meses = [];
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() - i, 1));
+        meses.push({
+          ano: d.getUTCFullYear(),
+          mes: d.getUTCMonth(), // 0-11
+          qtd: compras.get(`${d.getUTCFullYear()}-${d.getUTCMonth()}`) || 0,
+        });
+      }
+
+      const t = totais[0] || {};
       return {
-        tipos: TIPOS_ATIVOS_TI.map((tipo) => ({ nome: tipo, qtd: contagem.get(tipo) || 0 })),
+        disponiveis: TIPOS_DISPONIVEIS.map((nome) => ({ nome, qtd: dispMap.get(nome) || 0 })),
+        total: Number(t.total) || 0,
+        emUso: Number(t.emUso) || 0,
+        pctEmUso: Number(t.pctEmUso) || 0,
+        porTipo: lista(porTipo),
+        porProjeto: lista(porProjeto),
+        porStatus: lista(porStatus),
+        comprasPorMes: meses,
       };
     });
     res.json(dados);
@@ -2007,10 +2078,9 @@ app.get("/api/foto/:nome", async (req, res) => {
 });
 
 // ===== Helpdesk (SQL Server) =====
-// Chamados recentes de dbo.HELPDESK_CHAMADOS, separados em três colunas por
-// status. ID_SOLICITANTE, ATRIBUIDO_A e RESOLVIDO_POR são IDs de
-// dbo.HELPDESK_USUARIOS, por isso os JOINs para trazer o nome de quem abriu,
-// de quem atende e de quem resolveu.
+// Chamados recentes de helpdesk.CHAMADOS, separados em três colunas por
+// status. A própria tabela já traz o nome de quem abriu (SOLICITANTE_NOME), de
+// quem atende (ATRIBUIDO_A_NOME) e de quem resolveu (RESOLVIDO_POR_NOME).
 //
 // As colunas do painel NÃO são os status do helpdesk: o de-para está em
 // COLUNA_POR_STATUS, logo abaixo, e é onde um status novo entra.
@@ -2063,18 +2133,17 @@ rotaPainel("helpdesk-chamados", "/api/helpdesk-chamados", async (_req, res) => {
       const { recordset } = await pool.request().query(
         `SELECT id, titulo, prioridade, status, criadoEm, resolvidoEm, solicitante, atribuidoA, resolvidoPor
            FROM (
-             SELECT c.ID AS id, c.TITULO AS titulo, c.PRIORIDADE AS prioridade,
+             SELECT c.ID AS id, c.TITULO AS titulo,
+                    COALESCE(c.PRIORIDADE_TECNICO, c.PRIORIDADE_USUARIO) AS prioridade,
                     ${colunaHelpdeskSql("c.")} AS status,
                     c.CRIADO_EM AS criadoEm, c.RESOLVIDO_EM AS resolvidoEm,
-                    usol.NOME AS solicitante, ua.NOME AS atribuidoA, ur.NOME AS resolvidoPor,
+                    c.SOLICITANTE_NOME AS solicitante, c.ATRIBUIDO_A_NOME AS atribuidoA,
+                    c.RESOLVIDO_POR_NOME AS resolvidoPor,
                     ROW_NUMBER() OVER (
                       PARTITION BY ${colunaHelpdeskSql("c.")}
                       ORDER BY COALESCE(c.RESOLVIDO_EM, c.CRIADO_EM) DESC
                     ) AS rn
-               FROM dbo.HELPDESK_CHAMADOS c
-               LEFT JOIN dbo.HELPDESK_USUARIOS usol ON usol.ID = c.ID_SOLICITANTE
-               LEFT JOIN dbo.HELPDESK_USUARIOS ua ON ua.ID = c.ATRIBUIDO_A
-               LEFT JOIN dbo.HELPDESK_USUARIOS ur ON ur.ID = c.RESOLVIDO_POR
+               FROM helpdesk.CHAMADOS c
               WHERE UPPER(LTRIM(RTRIM(c.STATUS))) IN (${statusIn})
            ) t
           WHERE t.rn <= ${CHAMADOS_POR_COLUNA}
@@ -2084,7 +2153,7 @@ rotaPainel("helpdesk-chamados", "/api/helpdesk-chamados", async (_req, res) => {
       // Total por coluna (as colunas mostram só os recentes; o contador, tudo).
       const totais = await pool.request().query(
         `SELECT ${colunaHelpdeskSql()} AS status, COUNT(*) AS qtd
-           FROM dbo.HELPDESK_CHAMADOS
+           FROM helpdesk.CHAMADOS
           WHERE UPPER(LTRIM(RTRIM(STATUS))) IN (${statusIn})
           GROUP BY ${colunaHelpdeskSql()}`
       );

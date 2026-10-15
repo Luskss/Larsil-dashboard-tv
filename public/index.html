@@ -1110,94 +1110,134 @@
       .mapa-pino__halo { animation: none; }
     }
 
-    /* ===== Vista Ativos de TI: cards dividem a altura que sobra ===== */
-    .ativos-grid {
+    /* ===== Vista Ativos de TI: painel gráfico =====
+       Fileira de KPIs em cima; embaixo, grade 2x2 de gráficos que divide a
+       altura que sobra. Barras em HTML/CSS (texto nítido em qualquer escala
+       de TV); só a rosca é SVG. */
+    .ativos-kpis {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1.25rem;
+    }
+    .ativos-kpis .kpi { padding: .9rem 1rem; gap: .2rem; }
+    .ativos-kpis .kpi__valor { font-size: clamp(2.25rem, 3.4vw, 3.25rem); }
+    .ativos-kpi__sub { color: var(--text-dim); font-size: .78rem; }
+
+    .ativos-graficos {
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      grid-auto-rows: minmax(0, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr));
       gap: 1.25rem;
+      margin-top: 1.25rem;
     }
-
-    /* Ilustração do tipo de ativo, no rodapé do painel (ativos-ti.js monta o
-       <img> a partir dos PNGs em img/info).
-
-       A base de 24% do flex é o que ALINHA OS NÚMEROS: uma fatia fixa da
-       altura do painel, igual nos quatro, reservada para a imagem. Antes o
-       ícone tinha a altura da própria arte e, como as proporções são bem
-       diferentes — o celular é estreito e alto, a Starlink é quase 2,5x mais
-       larga que alta —, cada painel montava um bloco de altura diferente; o
-       painel centralizava esse bloco e os quatro números caíam em quatro
-       alturas diferentes.
-
-       Com a fatia fixa, a geometria dos quatro painéis passa a ser idêntica, e
-       aí as duas margens automáticas (uma no número, outra na imagem) dividem
-       a sobra em duas partes iguais: a imagem fica ancorada no rodapé e o
-       número e o rótulo ficam centrados no espaço acima dela, na mesma linha
-       nos quatro painéis. Margem automática em vez do justify-content: center
-       do .kpi porque aquele centraliza o CONJUNTO — número, rótulo e imagem
-       juntos —, o que deixaria a imagem boiando com um vazio embaixo.
-
-       Daí também o object-fit: contain. A caixa é sempre a mesma, mas as
-       proporções não são, então é o contain que encaixa cada arte inteira
-       dentro dela, centralizada, sem esticar nem cortar. Quem for larga ocupa a
-       largura e sobra altura; quem for alta faz o contrário — por isso o
-       celular parece menor que o notebook, e não há como igualar os dois sem
-       distorcer um deles. */
-    .ativos-grid .kpi__valor { margin-top: auto; }
-    .kpi__icone {
-      /* Encolhe (o 1 do meio) só se o painel ficar baixo demais para o
-         conjunto — numa grade de duas fileiras, por exemplo. Aí é melhor a
-         imagem ceder do que o número ser cortado. */
-      flex: 0 1 24%;
+    .ativos-graf {
+      display: flex;
+      flex-direction: column;
       min-height: 0;
+      overflow: hidden;
+    }
+    .ativos-graf .painel__subtitulo { margin-bottom: .75rem; }
+    .ativos-graf__corpo { flex: 1; min-height: 0; }
+
+    /* Barras horizontais: nome + valor | trilho. */
+    .ativos-hbarras {
+      height: 100%;
+      overflow: hidden; /* rolagem automática feita pelo ativos-ti.js */
+      display: flex;
+      flex-direction: column;
+      justify-content: space-around;
+      gap: .5rem;
+    }
+    .ativos-hbarra {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: minmax(7rem, 32%) minmax(0, 1fr);
+      align-items: center;
+      gap: .75rem;
+      font-size: .85rem;
+    }
+    .ativos-hbarra__nome { text-align: right; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ativos-hbarra__nome b { font-weight: 700; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+    .ativos-hbarra__fio {
+      height: clamp(.9rem, 2.2vh, 1.4rem);
+      min-width: 2px;
+      border-radius: .35rem;
+      background: var(--cor-barra, #5f8fd6);
+      transform-origin: left center;
+      /* Cresce da esquerda depois que o painel já entrou; cada barra um passo
+         depois da anterior. Só transform: não força layout a cada quadro. */
+      animation: ativos-barra-h .8s cubic-bezier(.22, 1, .36, 1) backwards;
+      animation-delay: calc(.55s + min(var(--ordem, 0), 8) * 70ms);
+    }
+    @keyframes ativos-barra-h { from { transform: scaleX(0); } }
+    @keyframes ativos-barra-v { from { transform: scaleY(0); } }
+    @keyframes ativos-fatia { from { stroke-dasharray: 0 var(--circ); } }
+    @keyframes ativos-fade { from { opacity: 0; } }
+
+    /* Os 4 painéis entram em sequência, depois da fileira de KPIs (que usa o
+       atraso padrão de .anima-surgir, teto de 5 passos de 55ms). */
+    .ativos-graf.anima-surgir { animation-delay: calc(.3s + var(--ordem, 0) * 90ms); }
+
+    /* Rosca + legenda lado a lado. */
+    .ativos-rosca { height: 100%; display: flex; align-items: center; gap: 1.5rem; }
+    .ativos-rosca svg { height: 100%; width: auto; aspect-ratio: 1; flex: 0 1 auto; min-width: 0; }
+    .ativos-rosca ul { list-style: none; margin: 0; padding: 0; flex: 1; display: grid; gap: .55rem; font-size: .9rem; }
+    .ativos-rosca li { display: flex; align-items: center; gap: .6rem; animation: surgir .5s cubic-bezier(.22, 1, .36, 1) backwards; animation-delay: calc(.9s + var(--ordem, 0) * 80ms); }
+    /* Cada fatia é "desenhada" em sequência, no sentido horário. O traço parte
+       de 0 até o comprimento final (definido no atributo do círculo). */
+    .ativos-rosca circle {
+      animation: ativos-fatia .7s cubic-bezier(.22, 1, .36, 1) backwards;
+      animation-delay: calc(.6s + var(--ordem, 0) * 110ms);
+    }
+    .ativos-rosca li span:nth-child(2) { font-weight: 600; }
+    .ativos-rosca li b { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+
+    /* Colunas verticais por mês: o valor fica no topo da coluna. */
+    .ativos-colunas {
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: .5rem;
+    }
+    .ativos-coluna { display: flex; flex-direction: column; align-items: center; min-height: 0; }
+    .ativos-coluna__area {
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+    }
+    .ativos-coluna__valor {
+      font-size: .75rem; font-variant-numeric: tabular-nums; color: var(--text-dim);
+      animation: ativos-fade .4s ease backwards;
+      animation-delay: calc(1.1s + var(--ordem, 0) * 50ms);
+    }
+    .ativos-coluna__barra {
       width: 70%;
-      object-fit: contain;
-      margin-top: auto;
-      /* A arte é branca pura; a 100% ela roubaria a cena do número, que é o
-         que a tela existe para mostrar. */
-      opacity: .85;
+      min-height: 2px;
+      border-radius: .3rem .3rem 0 0;
+      background: #5f8fd6;
+      transform-origin: center bottom;
+      animation: ativos-barra-v .8s cubic-bezier(.22, 1, .36, 1) backwards;
+      animation-delay: calc(.55s + var(--ordem, 0) * 50ms);
     }
-
-    /* Holofote dos Ativos de TI: o mesmo rodízio das outras telas, aplicado
-       aos painéis de KPI (holofote.js recebe `item: ".kpi"`). Aqui é a versão
-       barata do efeito — só transform e opacity, o que o compositor resolve
-       sem layout nem repintura. E mais barata ainda que nos cards de
-       coordenador: o número usa `7vw`, que depende da TELA e não da largura do
-       painel, então nem os container queries entram na conta. Escalar o painel
-       não muda nada de tamanho de texto; é a mesma imagem, maior.
-
-       O painel em foco CRESCE aqui (ao contrário do Colaboradores) porque esta
-       grade não recorta: os 4% que ele ganha cabem na calha de 1.25rem entre as
-       colunas e, na vertical, sobram na folga do rodapé. */
-    .ativos-grid--foco .kpi {
-      transition:
-        transform .6s cubic-bezier(.22, 1, .36, 1),
-        opacity .5s ease,
-        border-color .5s ease;
-      /* Promove os painéis a camadas próprias uma vez só, enquanto o rodízio
-         está ligado — senão o navegador cria e destrói a camada a cada troca. */
-      will-change: transform, opacity;
-    }
-    .ativos-grid--foco .kpi.holofote--recuado {
-      transform: scale(.9);
-      opacity: .35;
-    }
-    .ativos-grid--foco .kpi.holofote--foco {
-      transform: scale(1.04);
-      opacity: 1;
-      /* Mesmo realce dos cards de coordenador, para as telas falarem a mesma
-         língua: a borda puxa para o verde e um anel fino reforça por fora. */
-      border-color: color-mix(in srgb, var(--success) 55%, var(--border));
-      box-shadow:
-        0 30px 80px -32px rgba(0, 0, 0, .65),
-        0 0 0 2px color-mix(in srgb, var(--success) 28%, transparent);
-      z-index: 2;
-    }
-
     @media (prefers-reduced-motion: reduce) {
-      .ativos-grid--foco .kpi { transition: none; will-change: auto; }
+      .ativos-hbarra__fio, .ativos-coluna__barra, .ativos-coluna__valor,
+      .ativos-rosca circle, .ativos-rosca li { animation: none; }
+    }
+    .ativos-coluna__mes {
+      margin-top: .35rem;
+      padding-top: .3rem;
+      width: 100%;
+      text-align: center;
+      font-size: .75rem;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
     }
 
     .ativos-aviso {
@@ -3506,8 +3546,30 @@
 
     <div id="ativos-aviso" class="ativos-aviso" role="alert"></div>
 
-    <!-- Cards por tipo de ativo (preenchidos pelo ativos-ti.js) -->
-    <div id="ativos-cards" class="ativos-grid mt-3"></div>
+    <!-- KPIs + gráficos (preenchidos pelo ativos-ti.js) -->
+    <div id="ativos-kpis" class="ativos-kpis"></div>
+    <div class="ativos-graficos">
+      <div class="painel ativos-graf anima-surgir" style="--ordem: 0;">
+        <div class="painel__titulo">Ativos por tipo</div>
+        <div class="painel__subtitulo">Equipamentos em operação</div>
+        <div id="ativos-por-tipo" class="ativos-graf__corpo"></div>
+      </div>
+      <div class="painel ativos-graf anima-surgir" style="--ordem: 1;">
+        <div class="painel__titulo">Ativos por projeto</div>
+        <div class="painel__subtitulo">Equipamentos por centro de custo</div>
+        <div id="ativos-por-projeto" class="ativos-graf__corpo"></div>
+      </div>
+      <div class="painel ativos-graf anima-surgir" style="--ordem: 2;">
+        <div class="painel__titulo">Status dos ativos</div>
+        <div class="painel__subtitulo">Situação atual do inventário</div>
+        <div id="ativos-por-status" class="ativos-graf__corpo"></div>
+      </div>
+      <div class="painel ativos-graf anima-surgir" style="--ordem: 3;">
+        <div class="painel__titulo">Aquisições por mês</div>
+        <div class="painel__subtitulo">Compras nos últimos 12 meses</div>
+        <div id="ativos-por-mes" class="ativos-graf__corpo"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ===== Vista Colaboradores (efetivo por coordenador, com as classes) ===== -->

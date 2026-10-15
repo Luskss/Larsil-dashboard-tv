@@ -1,4 +1,4 @@
-// Página Helpdesk: chamados recentes de dbo.HELPDESK_CHAMADOS separados em
+// Página Helpdesk: chamados recentes de helpdesk.CHAMADOS separados em
 // três colunas por status. Dados vêm de /api/helpdesk-chamados, que já traz
 // o nome de quem abriu (ID_SOLICITANTE), de quem atende (ATRIBUIDO_A) e de
 // quem resolveu (RESOLVIDO_POR).
